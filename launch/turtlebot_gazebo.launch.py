@@ -1,21 +1,8 @@
-"""
-Author: David Valencia
-Date: 25 / 08 /2021
-
-Describer:  Simple launch to SIMULATE the doosan robot in GAZEBO in my own package
-            Based on the original git package from doosan-robot2
-            This scripts just spawns the robot arm in GAZEBO
-            the robot description (urdf and xacro) are in: src/my_doosan_pkg/description/xacro
-
-            Robot model m1013 color white.
-            Robot model a0912 color blue.
-"""
-
 import os
 from launch_ros.actions import Node
 from launch import LaunchDescription
 from launch.substitutions import Command
-from launch.actions import ExecuteProcess
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
 from ament_index_python.packages import get_package_share_directory
 
 from launch.actions import IncludeLaunchDescription
@@ -25,14 +12,30 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
 
-    #xacro_file = get_package_share_directory('turtlebot') + '/urdf/turtlebot3_$(arg model).urdf.xacro'
+    # Map fully qualified names to relative ones so the node's namespace can be prepended.
+    # In case of the transforms (tf), currently, there doesn't seem to be a better alternative
+    # https://github.com/ros/geometry2/issues/32
+    # https://github.com/ros/robot_state_publisher/pull/30
+    # TODO(orduno) Substitute with `PushNodeRemapping`
+    #              https://github.com/ros2/launch_ros/issues/56
+    remappings = [('/tf', 'tf'),
+                  ('/tf_static', 'tf_static')]
+    namespace = LaunchConfiguration('namespace')
+    use_namespace = LaunchConfiguration('use_namespace')
 
-    # Start Gazebo with my empty world
+    # Declare the launch arguments
+    declare_namespace_cmd = DeclareLaunchArgument(
+        'namespace',
+        default_value='',
+        description='Top-level namespace')
+
+    declare_use_namespace_cmd = DeclareLaunchArgument(
+        'use_namespace',
+        default_value='false',
+        description='Whether to apply a namespace to the navigation stack')
+
+    # Start Gazebo with our lab world
     world = get_package_share_directory('my_turtlebot') + '/worlds/lab_world.world'
-    #world = get_package_share_directory('my_turtlebot') + '/worlds/test.world'
-    #gazebo_node = ExecuteProcess(cmd=['gazebo', '--verbose', world, '-s', 'libgazebo_ros_factory.so'], output='screen')
-
-    #return LaunchDescription([gazebo_node])
     
     launch_file_dir = os.path.join(get_package_share_directory('turtlebot3_gazebo'), 'launch')
     pkg_gazebo_ros = get_package_share_directory('gazebo_ros')
@@ -41,11 +44,6 @@ def generate_launch_description():
     x_pose = LaunchConfiguration('x_pose', default='0.0')
     y_pose = LaunchConfiguration('y_pose', default='0.0')
 
-    #world = os.path.join(
-    #    get_package_share_directory('turtlebot3_gazebo'),
-    #    'worlds',
-    #    'empty_world.world'
-    #)
 
     gzserver_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -60,11 +58,25 @@ def generate_launch_description():
         )
     )
 
-    robot_state_publisher_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(launch_file_dir, 'robot_state_publisher.launch.py')
-        ),
-        launch_arguments={'use_sim_time': use_sim_time}.items()
+    #robot_state_publisher_cmd = IncludeLaunchDescription(
+    #    PythonLaunchDescriptionSource(
+    #        os.path.join(launch_file_dir, 'robot_state_publisher.launch.py')
+    #    ),
+    #    launch_arguments={'use_sim_time': use_sim_time}.items()
+    #)
+    urdf = os.path.join(get_package_share_directory('turtlebot3_description'), 'urdf', 'turtlebot3_burger.urdf')
+    with open(urdf, 'r') as infp:
+        robot_description = infp.read()
+        
+    robot_state_publisher_cmd = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        name='robot_state_publisher',
+        namespace=namespace,
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time,
+                     'robot_description': robot_description}],
+        remappings=remappings
     )
 
     spawn_turtlebot_cmd = IncludeLaunchDescription(
@@ -78,6 +90,10 @@ def generate_launch_description():
     )
 
     ld = LaunchDescription()
+    
+    # Declare the launch options
+    ld.add_action(declare_namespace_cmd)
+    ld.add_action(declare_use_namespace_cmd)
 
     # Add the commands to the launch description
     ld.add_action(gzserver_cmd)

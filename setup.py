@@ -17,6 +17,7 @@ setup(
         (os.path.join('share', package_name, 'urdf'), glob(os.path.join('urdf', '*.urdf'))),
         (os.path.join('share', package_name, 'urdf'), glob(os.path.join('urdf', '*.xacro'))),
         (os.path.join('share', package_name, 'worlds'), glob(os.path.join('worlds', '*.world'))),
+        (os.path.join('share', package_name, 'maps'), glob(os.path.join('maps', '*.*'))),
         (os.path.join('share', package_name, 'models'), [f for f in glob(os.path.join('models', '**/*'), recursive=True) if os.path.isfile(f)]),
     ],
     install_requires=['setuptools'],
