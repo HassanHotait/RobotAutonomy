@@ -1,1 +1,13 @@
 # RobotAutonomy
+
+
+sudo apt install ros-humble-turtlebot3*
+
+
+source /home/ubuntu/Desktop/RobotAutonomy/install/setup.bash
+export ROS_DOMAIN_ID=11
+export TURTLEBOT3_MODEL=burger
+export GAZEBO_MODEL_PATH=$GAZEBO_MODEL_PATH:$(ros2 pkg prefix my_turtlebot)/share/my_turtlebot/models
+export GAZEBO_MODEL_PATH=$GAZEBO_MODEL_PATH:$(ros2 pkg prefix turtlebot3_gazebo)/share/turtlebot3_gazebo/models
+
+ros2 launch my_turtlebot turtlebot_simulation.launch.py
