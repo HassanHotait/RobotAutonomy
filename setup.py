@@ -38,6 +38,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'LidarOdom.py = my_turtlebot.LidarOdom:main'
         ],
     },
 )
