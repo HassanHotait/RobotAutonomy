@@ -69,8 +69,8 @@ class LocalizationNode(Node):
         return pc, mu
     
     def icp(self, pc_2, pc_1, mu_2, mu_1):
-        pc_1 = pc_1 - mu_1
-        pc_2 = pc_2 - mu_2
+        pc_1_norm = pc_1 - mu_1
+        pc_2_norm = pc_2 - mu_2
         combined_pc = np.concatenate((pc_1, pc_2), axis=1)
 
         # Compute the covariance matrix for the combined dataset
@@ -80,6 +80,12 @@ class LocalizationNode(Node):
 
         t = mu_1 - R @ mu_2
         T = np.vstack((np.hstack((R, t)), np.array([0, 0, 1])))
+        pc_2_transformed = T @ np.vstack((pc_1, np.ones((1, pc_2.shape[1]))))
+
+        if pc_2_transformed == pc_2:
+            return T
+        
+        
         return T
 
     def cmd_vel_callback(self, cmd_vel_msg):
