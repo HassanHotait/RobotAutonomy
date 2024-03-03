@@ -10,6 +10,7 @@ from nav_msgs.msg import Odometry
 import tf2_ros
 import tf2_geometry_msgs
 import numpy as np
+from scipy.spatial.distance import cdist
 
 class LocalizationNode(Node):
     def __init__(self):
@@ -68,22 +69,39 @@ class LocalizationNode(Node):
 
         return pc, mu
     
-    def icp(self, pc_2, pc_1, mu_2, mu_1):
+    
+    def find_nearest_neighbors(self, pc1, pc2):
+        distances = cdist(pc1.T, pc2.T)  # Compute pairwise distances
+        nearest_indices = np.argmin(distances, axis=1)  # Find indices of nearest neighbors
+        sorted_pc1 = pc1[:, np.argsort(nearest_indices)]  # Sort pc1 based on nearest_indices
+        sorted_pc2 = pc2[:, np.argsort(nearest_indices)]  # Sort pc2 based on nearest_indices
+        return sorted_pc1, sorted_pc2
+    
+    def icp(self, pc_2, pc_1, mu_2, mu_1,max_iterations=100, tolerance=1e-5):
         pc_1_norm = pc_1 - mu_1
         pc_2_norm = pc_2 - mu_2
-        combined_pc = np.concatenate((pc_1, pc_2), axis=1)
 
-        # Compute the covariance matrix for the combined dataset
-        cov = np.cov(combined_pc)
-        U, S, Vt= np.linalg.svd(cov)
-        R = U @ Vt
+        for i in range(max_iterations):
+            # Find the closest points
+            if i != 0:
+                pc1_crspd, pc2_crspd = self.find_nearest_neighbors(pc1_crspd, pc2_crspd)
+            else:
+                pc1_crspd, pc2_crspd = self.find_nearest_neighbors(pc_1_norm, pc_2_norm)
+            # combined_pc = np.concatenate((pc_1, pc_2), axis=1)
 
-        t = mu_1 - R @ mu_2
-        T = np.vstack((np.hstack((R, t)), np.array([0, 0, 1])))
-        pc_2_transformed = T @ np.vstack((pc_1, np.ones((1, pc_2.shape[1]))))
+            # Get Transformation
+            cov = np.cov(pc1_crspd @ pc2_crspd.T)
+            U, S, Vt= np.linalg.svd(cov)
+            R = U @ Vt
 
-        if pc_2_transformed == pc_2:
-            return T
+            t = mu_1 - R @ mu_2
+            T = np.vstack((np.hstack((R, t)), np.array([0, 0, 1])))
+            # Transform pc_2
+            pc1_crspd = T @ np.vstack((pc1_crspd, np.ones((1, pc_2.shape[1]))))
+
+            if pc1_crspd == pc2_crspd:
+                print(f'Converged at iteration {i}')
+                return T
         
         
         return T
@@ -118,9 +136,7 @@ class LocalizationNode(Node):
             pc_1, mu_1 = self.process_scan(self.scan_msg_prev)
             # Perform ICP
             T = self.icp(pc_2, pc_1, mu_2, mu_1)
-
-            print(f'Transformation {T.shape}: \n {T}')
-
+            print(f'Transformation: \n {T}')
 
 
             
