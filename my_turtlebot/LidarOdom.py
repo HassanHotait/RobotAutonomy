@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+
 
 import cmd
 from os import wait
@@ -90,7 +90,7 @@ class LocalizationNode(Node):
             # combined_pc = np.concatenate((pc_1, pc_2), axis=1)
 
             # Get Transformation
-            cov = np.cov(pc1_crspd @ pc2_crspd.T)
+            cov = np.cov(pc1_crspd, pc2_crspd)
             U, S, Vt= np.linalg.svd(cov)
             R = U @ Vt
 
@@ -102,9 +102,7 @@ class LocalizationNode(Node):
             if pc1_crspd == pc2_crspd:
                 print(f'Converged at iteration {i}')
                 return T
-        
-        
-        return T
+
 
     def cmd_vel_callback(self, cmd_vel_msg):
         # Get Velocity Command
@@ -135,45 +133,40 @@ class LocalizationNode(Node):
         if self.scan_msg_prev is not None:
             pc_1, mu_1 = self.process_scan(self.scan_msg_prev)
             # Perform ICP
-            T = self.icp(pc_2, pc_1, mu_2, mu_1)
-            print(f'Transformation: \n {T}')
+            R, t = self.icp(pc_2, pc_1, mu_2, mu_1)
+            x = self.x0 + t[0]
+            y = self.y0 + t[1]
+            z = self.z0 + t[2]
+            theta = self.theta0 + R[2,2]
+            print(f'Transformation: \n {R} \n {t}')
 
+        else:
+            x = self.x0 + delta_x
+            y = self.y0 + delta_y
+            z = self.z0
+            theta = self.theta0 + delta_theta
 
-            
-            
-            
-            # Replace this with your ICP algorithm
-            # For example, you could use the ICP algorithm from the previous lab
-            # or use the ICP algorithm from the PCL library
-            # Example code:
-            # delta_x, delta_y, delta_theta = self.icp(self.pc_kminus1, pc)
+        odom = Odometry()
 
-        # x = self.x0 + delta_x
-        # y = self.y0 + delta_y
-        # theta = self.theta0 + delta_theta
+        odom.header.stamp = self.get_clock().now().to_msg()
+        odom.header.frame_id = 'lidar_odom'
 
-        # # Create PoseStamped message
-        # odom = Odometry()
+        odom.child_frame_id = '???'
 
-        # odom.header.stamp = self.get_clock().now().to_msg()
-        # odom.header.frame_id = 'lidar_odom'
-
-        # odom.child_frame_id = '???'
-
-        # odom.pose.pose.position.x = x
-        # odom.pose.pose.position.y = y
-        # odom.pose.pose.position.z = self.z0
-        # odom.pose.pose.orientation.z = theta
-
-        # odom.twist.twist = self.cmd_vel_msg
-        # # Publish the estimated pose
-        # self.pose_pub.publish(odom)
-
+        odom.pose.pose.position.x = x
+        odom.pose.pose.position.y = y
+        odom.pose.pose.position.z = z
+        odom.pose.pose.orientation.z = theta
+        odom.twist.twist = self.cmd_vel_msg
+        # Publish the estimated pose
+        self.pose_pub.publish(odom)
+        print(f'Publishing Odom: \n {odom}')
 
         self.t0 = self.t0+ delta_t
-        # self.x0 = x
-        # self.y0 = y
-        # self.theta0 = theta
+        self.x0 = x
+        self.y0 = y
+        self.z0 = z
+        self.theta0 = theta
         self.scan_msg_prev = scan_msg
 
 def main(args=None):

@@ -1,0 +1,3 @@
+[console_scripts]
+LidarOdom.py = my_turtlebot.LidarOdom:main
+
