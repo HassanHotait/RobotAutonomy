@@ -85,6 +85,19 @@ class MappingNode(Node):
         mu = np.mean(pc, axis=1).reshape(-1,1)
 
         return pc, mu
+    def point_to_grid(self, pc,map_msg):
+        data = np.zeros((map_msg.info.width, map_msg.info.height), dtype=np.int8)
+
+        for pt in pc.T:
+            x = int((map_msg.info.width/2) + (pt[0]/map_msg.info.resolution))
+            y = int((map_msg.info.height/2) + (pt[1]/map_msg.info.resolution))
+            if x >= 0 and x < map_msg.info.width and y >= 0 and y < map_msg.info.height:
+                data[y,x] = 100
+
+        data = data.flatten().tolist()
+
+
+        return data
     
     def scan_callback(self, scan_msg):
         # Perform localization using constant velocity model
@@ -126,7 +139,7 @@ class MappingNode(Node):
         # map_msg.info.origin.orientation.y = 0.0
         # map_msg.info.origin.orientation.z = 0.0
         # map_msg.info.origin.orientation.w = 1.0
-        map_msg.data = list([0]*map_msg.info.width*map_msg.info.height)
+        map_msg.data = self.point_to_grid(pc_2,map_msg)#list([0]*map_msg.info.width*map_msg.info.height)
 
         # Publish the map
         self.map_pub.publish(map_msg)
