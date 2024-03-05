@@ -11,6 +11,8 @@ import tf2_ros
 import tf2_geometry_msgs
 import numpy as np
 from scipy.spatial.distance import cdist
+import math
+from simpleicp import PointCloud, SimpleICP
 
 class LocalizationNode(Node):
     def __init__(self):
@@ -19,9 +21,9 @@ class LocalizationNode(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
-        self.pose_pub = self.create_publisher(Odometry, '/odom', 10)
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 1)
+        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 1)
+        self.pose_pub = self.create_publisher(Odometry, '/odom', 1)
 
         transform_scanner = self.wait_for_transform('odom', 'base_scan')
 
@@ -56,10 +58,13 @@ class LocalizationNode(Node):
         pc_y = []
 
         for i,range in enumerate(scan_msg.ranges):
-            if range < scan_msg.range_min or range > scan_msg.range_max:
-                continue
-            pc_x.append(range * np.cos(scan_msg.angle_min + (i*scan_msg.angle_increment)))
-            pc_y.append(range * np.sin(scan_msg.angle_min + (i*scan_msg.angle_increment)))
+            if range > scan_msg.range_max:
+                pc_x.append(scan_msg.range_max * np.cos(scan_msg.angle_min + (i*scan_msg.angle_increment)))
+                pc_y.append(scan_msg.range_max * np.sin(scan_msg.angle_min + (i*scan_msg.angle_increment)))
+            else:
+                pc_x.append(range * np.cos(scan_msg.angle_min + (i*scan_msg.angle_increment)))
+                pc_y.append(range * np.sin(scan_msg.angle_min + (i*scan_msg.angle_increment)))
+
 
         pc_x = np.hstack(pc_x)
         pc_y = np.hstack(pc_y)
@@ -77,31 +82,43 @@ class LocalizationNode(Node):
         sorted_pc2 = pc2[:, np.argsort(nearest_indices)]  # Sort pc2 based on nearest_indices
         return sorted_pc1, sorted_pc2
     
-    def icp(self, pc_2, pc_1, mu_2, mu_1,max_iterations=100, tolerance=1e-5):
+    def RMSE(self, pc1, pc2):
+
+        e = np.mean(np.sqrt( (pc1[0] - pc2[0])** 2 + (pc1[1] - pc2[1])** 2))
+
+        return e
+    
+    def icp(self, pc_2, pc_1, mu_2, mu_1,max_iterations=1, tolerance=0.2):
+        # Center the point clouds
         pc_1_norm = pc_1 - mu_1
         pc_2_norm = pc_2 - mu_2
 
+        # Iteratively find the optimal rotation and translation
+        # for i in range(max_iterations):
+        i = 0
         for i in range(max_iterations):
-            # Find the closest points
-            if i != 0:
-                pc1_crspd, pc2_crspd = self.find_nearest_neighbors(pc1_crspd, pc2_crspd)
-            else:
-                pc1_crspd, pc2_crspd = self.find_nearest_neighbors(pc_1_norm, pc_2_norm)
-            # combined_pc = np.concatenate((pc_1, pc_2), axis=1)
-
             # Get Transformation
-            cov = np.cov(pc1_crspd, pc2_crspd)
+            assert pc_1_norm.shape == pc_2_norm.shape, 'Point clouds must have the same shape'
+            # Get Covariance Matrix of Point Clouds 1 and 2
+            cov = np.cov(pc_1_norm @ pc_1_norm.T)
+            # print(f'Covariance Shape: \n {cov.shape}')
+            # Get SVD of Covariance Matrix
             U, S, Vt= np.linalg.svd(cov)
-            R = U @ Vt
+            # print(f'V Shape: \n {Vt.T}')
+            # Get Rotation Matrix
+            R = (U @ Vt).reshape(2,2) 
+            # Get Translation
+            t = mu_1 - (R @ mu_2)
+            
 
-            t = mu_1 - R @ mu_2
+            # Transform pc_1
             T = np.vstack((np.hstack((R, t)), np.array([0, 0, 1])))
-            # Transform pc_2
-            pc1_crspd = T @ np.vstack((pc1_crspd, np.ones((1, pc_2.shape[1]))))
+            pc_1_norm = T @ np.vstack((pc_1_norm, np.ones((1, pc_2.shape[1]))))
+            pc_1_norm = pc_1_norm[:2]
 
-            if pc1_crspd == pc2_crspd:
-                print(f'Converged at iteration {i}')
-                return T
+        print(f'RMSE: {self.RMSE(pc_1_norm, pc_2_norm)}')
+
+        return R,t 
 
 
     def cmd_vel_callback(self, cmd_vel_msg):
@@ -136,15 +153,16 @@ class LocalizationNode(Node):
             R, t = self.icp(pc_2, pc_1, mu_2, mu_1)
             x = self.x0 + t[0]
             y = self.y0 + t[1]
-            z = self.z0 + t[2]
-            theta = self.theta0 + R[2,2]
-            print(f'Transformation: \n {R} \n {t}')
+            z = self.z0 
+            theta = self.theta0 + R[1,1]
+            print(f'Rotation Matrix: \n {R}')
+            print(f'Translation: \n {t}')
 
         else:
-            x = self.x0 + delta_x
-            y = self.y0 + delta_y
+            x = self.x0 
+            y = self.y0 
             z = self.z0
-            theta = self.theta0 + delta_theta
+            theta = self.theta0 
 
         odom = Odometry()
 
@@ -153,14 +171,14 @@ class LocalizationNode(Node):
 
         odom.child_frame_id = '???'
 
-        odom.pose.pose.position.x = x
-        odom.pose.pose.position.y = y
-        odom.pose.pose.position.z = z
-        odom.pose.pose.orientation.z = theta
+        odom.pose.pose.position.x = float(x)
+        odom.pose.pose.position.y = float(y)
+        odom.pose.pose.position.z = float(z)
+        odom.pose.pose.orientation.z = float(theta)
         odom.twist.twist = self.cmd_vel_msg
         # Publish the estimated pose
         self.pose_pub.publish(odom)
-        print(f'Publishing Odom: \n {odom}')
+        # print(f'Publishing Odom: \n {odom}')
 
         self.t0 = self.t0+ delta_t
         self.x0 = x
