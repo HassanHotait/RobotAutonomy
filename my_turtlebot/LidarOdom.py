@@ -2,6 +2,9 @@
 
 import cmd
 from os import wait
+
+from yaml import scan
+from osrf_pycommon.terminal_color.windows import _print_ansi_color_win32
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -21,8 +24,8 @@ class LocalizationNode(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 1)
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 1)
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
+        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.pose_pub = self.create_publisher(Odometry, '/odom', 1)
 
         transform_scanner = self.wait_for_transform('odom', 'base_scan')
@@ -65,14 +68,12 @@ class LocalizationNode(Node):
                 pc_x.append(range * np.cos(scan_msg.angle_min + (i*scan_msg.angle_increment)))
                 pc_y.append(range * np.sin(scan_msg.angle_min + (i*scan_msg.angle_increment)))
 
-
         pc_x = np.hstack(pc_x)
         pc_y = np.hstack(pc_y)
 
         pc = np.vstack((pc_x, pc_y))
-        mu = np.mean(pc, axis=1).reshape(-1,1)
 
-        return pc, mu
+        return pc
     
     
     def find_nearest_neighbors(self, pc1, pc2):
@@ -88,37 +89,65 @@ class LocalizationNode(Node):
 
         return e
     
-    def icp(self, pc_2, pc_1, mu_2, mu_1,max_iterations=1, tolerance=0.2):
-        # Center the point clouds
-        pc_1_norm = pc_1 - mu_1
-        pc_2_norm = pc_2 - mu_2
+    def icp(self, pc1,pc2,T,max_iterations=1000, tolerance=0.05,epsilon=1e-8):
 
-        # Iteratively find the optimal rotation and translation
-        # for i in range(max_iterations):
-        i = 0
+        def Pi(pts_inhomogenous):
+            """
+            Converts homogeneous points to inhomogeneous coordinates.
+            
+            Args:
+                pts_inhomogenous (numpy.ndarray): Homogeneous points represented as 3xN or 4xN.
+                
+            Returns:
+                numpy.ndarray: The inhomogeneous representation of the input point.
+            """
+
+            assert pts_inhomogenous.shape[0] == 3 or pts_inhomogenous.shape[0] == 4, "Input points must be 3xN or 4xN"
+            tmp = pts_inhomogenous[:-1] / pts_inhomogenous[-1]
+            return tmp
+        
+        def PiInv(pts_homogenous):
+            """
+            Converts inhomogeneous points to homogeneous coordinates.
+
+            Parameters:
+            p (numpy.ndarray): Inhomogeneous point represents as 2xN or 3xN.
+
+            Returns:
+            numpy.ndarray: The homogeneous representation of the input point.
+            """
+
+            assert pts_homogenous.shape[0] == 2 or pts_homogenous.shape[0] == 3, "Input points must be 2xN or 3xN"
+            tmp = np.vstack((pts_homogenous,np.ones(pts_homogenous.shape)[0]))
+
+            return tmp
+        
+        pc1 = Pi(T@PiInv(pc1))
         for i in range(max_iterations):
-            # Get Transformation
-            assert pc_1_norm.shape == pc_2_norm.shape, 'Point clouds must have the same shape'
+            pc1 = (pc1- np.mean(pc1, axis=1, keepdims=True)) / np.std(pc1, axis=1, keepdims=True)
+            pc2 = (pc2 - np.mean(pc2, axis=1, keepdims=True)) / np.std(pc2, axis=1, keepdims=True)
+            # # Get Transformation
+            assert pc1.shape == pc2.shape, 'Point clouds must have the same shape'
             # Get Covariance Matrix of Point Clouds 1 and 2
-            cov = np.cov(pc_1_norm @ pc_1_norm.T)
-            # print(f'Covariance Shape: \n {cov.shape}')
+            cov = np.cov(pc1 @ pc2.T)
+            # Add a small positive constant to the diagonal for regularization
+            cov += np.eye(cov.shape[0]) * epsilon
             # Get SVD of Covariance Matrix
             U, S, Vt= np.linalg.svd(cov)
-            # print(f'V Shape: \n {Vt.T}')
             # Get Rotation Matrix
             R = (U @ Vt).reshape(2,2) 
             # Get Translation
-            t = mu_1 - (R @ mu_2)
-            
-
+            t = np.mean(pc1, axis=1, keepdims=True) - (R @ np.mean(pc2, axis=1, keepdims=True))
             # Transform pc_1
-            T = np.vstack((np.hstack((R, t)), np.array([0, 0, 1])))
-            pc_1_norm = T @ np.vstack((pc_1_norm, np.ones((1, pc_2.shape[1]))))
-            pc_1_norm = pc_1_norm[:2]
+            T = np.vstack((np.hstack((R, t)), np.array([[0, 0, 1]])))
+            pc1 = Pi(T @ np.vstack((pc1, np.ones((1, pc1.shape[1])))))
 
-        print(f'RMSE: {self.RMSE(pc_1_norm, pc_2_norm)}')
 
-        return R,t 
+        if self.RMSE(pc1, pc2) < tolerance:
+                return R, t
+        else:
+            print(f'RMSE: {self.RMSE(pc1, pc2)}')
+            raise ValueError('ICP did not converge')
 
 
     def cmd_vel_callback(self, cmd_vel_msg):
@@ -142,15 +171,17 @@ class LocalizationNode(Node):
         delta_x = (self.linear_velocity_mps * np.cos(self.theta0) * delta_t)
         delta_y = (self.linear_velocity_mps * np.sin(self.theta0) * delta_t)
         delta_theta = self.angular_velocity_radps * delta_t
-
-
-        pc_2, mu_2  = self.process_scan(scan_msg)
-        # print(f'Point Cloud Mean {pc.shape}: \n {mu}')
+        T = np.array([
+            [np.cos(delta_theta), -np.sin(delta_theta), delta_x],
+            [np.sin(delta_theta), np.cos(delta_theta), delta_y],
+            [0, 0, 1]
+        ])
 
         if self.scan_msg_prev is not None:
-            pc_1, mu_1 = self.process_scan(self.scan_msg_prev)
+            pc_1= self.process_scan(self.scan_msg_prev)
+            pc_2= self.process_scan(scan_msg)
             # Perform ICP
-            R, t = self.icp(pc_2, pc_1, mu_2, mu_1)
+            R, t = self.icp(pc_1,pc_2,T)
             x = self.x0 + t[0]
             y = self.y0 + t[1]
             z = self.z0 
@@ -178,7 +209,6 @@ class LocalizationNode(Node):
         odom.twist.twist = self.cmd_vel_msg
         # Publish the estimated pose
         self.pose_pub.publish(odom)
-        # print(f'Publishing Odom: \n {odom}')
 
         self.t0 = self.t0+ delta_t
         self.x0 = x
