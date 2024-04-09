@@ -2,6 +2,7 @@
 
 import cmd
 from os import wait
+from re import T
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -41,6 +42,7 @@ class MappingNode(Node):
 
 
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+        T0 = self.wait_for_transform('odom', 'base_scan')
 
         self.map_msg0 = OccupancyGrid()
         self.map_msg0.header.stamp = self.get_clock().now().to_msg()
@@ -53,8 +55,8 @@ class MappingNode(Node):
         self.map_msg0.info.origin.position.z = 0.0
         self.map_msg0.info.origin.orientation.x = 0.0
         self.map_msg0.info.origin.orientation.y = 0.0
-        self.map_msg0.info.origin.orientation.z = 0.0
-        self.map_msg0.info.origin.orientation.w = 1.0
+        self.map_msg0.info.origin.orientation.z = 0.0#T0.transform.rotation.z
+        self.map_msg0.info.origin.orientation.w = 0.0# T0.transform.rotation.w
         self.map_msg0.data = [0] * self.map_msg0.info.width * self.map_msg0.info.height
         
 
@@ -63,13 +65,13 @@ class MappingNode(Node):
         self.static_transform.header.stamp = self.get_clock().now().to_msg()
         self.static_transform.header.frame_id = 'odom'
         self.static_transform.child_frame_id = 'map'
-        self.static_transform.transform.translation.x = 0.0
-        self.static_transform.transform.translation.y = 0.0
-        self.static_transform.transform.translation.z = 0.0
-        self.static_transform.transform.rotation.x = 0.0
-        self.static_transform.transform.rotation.y = 0.0
-        self.static_transform.transform.rotation.z = 0.0
-        self.static_transform.transform.rotation.w = 1.0
+        self.static_transform.transform.translation.x = T0.transform.translation.x
+        self.static_transform.transform.translation.y = T0.transform.translation.y
+        self.static_transform.transform.translation.z = T0.transform.translation.z
+        self.static_transform.transform.rotation.x = T0.transform.rotation.x
+        self.static_transform.transform.rotation.y = T0.transform.rotation.y
+        self.static_transform.transform.rotation.z = T0.transform.rotation.z
+        self.static_transform.transform.rotation.w = T0.transform.rotation.w
 
     def wait_for_transform(self, target_frame, source_frame):
         """
@@ -118,7 +120,7 @@ class MappingNode(Node):
 
         return pc
     
-    def point_to_grid(self, pc, map_msg,transform):
+    def point_to_grid(self, pc, map_msg):
         """
         Converts a point cloud to a grid representation based on the given map message.
 
@@ -143,19 +145,21 @@ class MappingNode(Node):
             tmp = np.vstack((pts_homogenous, np.ones(pts_homogenous.shape)[0]))
             return tmp
         
+        transform = self.wait_for_transform('odom', 'base_scan')
         data = np.array(map_msg.data).reshape(map_msg.info.height, map_msg.info.width)
         R = Rotation.from_euler('z', transform.transform.rotation.z).as_matrix()
 
-        # pc_r = R @ PiInv(pc) + np.array([transform.transform.translation.x, transform.transform.translation.y, 0]).reshape(3,1)
+        print(f'Rotation Matrix: \n {R}')
+        print(f' Angle: {transform.transform.rotation.z}')
 
-        for pt in pc.T:
 
+        pc_r = R[:2,:2] @ (pc)# + np.array([transform.transform.translation.x, transform.transform.translation.y]).reshape(2,1)
 
-            x = int((map_msg.info.width / 2) + (pt[0] / map_msg.info.resolution) + (transform.transform.translation.x / map_msg.info.resolution))
-            y = int((map_msg.info.height / 2) + (pt[1] / map_msg.info.resolution) + (transform.transform.translation.y / map_msg.info.resolution))
+        for pt in pc_r.T:
+            # Rotate (x, y) by transform.transform.rotation.z
+            x = int((map_msg.info.width / 2) + (pt[0] / map_msg.info.resolution))# + (transform.transform.translation.x / map_msg.info.resolution))
+            y = int((map_msg.info.height / 2) + (pt[1] / map_msg.info.resolution))# + (transform.transform.translation.y / map_msg.info.resolution))
 
-            # pt_ro= R @ np.array([x, y,1]).reshape(3,1)
-  
             if x >= 0 and x < map_msg.info.width and y >= 0 and y < map_msg.info.height:
                 data[y, x] = 100
 
@@ -180,7 +184,7 @@ class MappingNode(Node):
         # # Fill random cells with value 100
         # random_indices = np.random.randint(0, 100, size=(50, 2))
         # occupancy_grid[random_indices[:, 0], random_indices[:, 1]] = int(100)
-        transform = self.wait_for_transform('odom', 'base_scan')
+        
 
         # Create an OccupancyGrid message and fill in the information
         map_msg = self.map_msg0
@@ -190,7 +194,7 @@ class MappingNode(Node):
         # map_msg.info.origin.orientation.z = transform.transform.rotation.z
         # map_msg.info.origin.orientation.w = transform.transform.rotation.w
 
-        map_msg.data = self.point_to_grid(pc,map_msg,transform)#list([0]*map_msg.info.width*map_msg.info.height)
+        map_msg.data = self.point_to_grid(pc,map_msg)#list([0]*map_msg.info.width*map_msg.info.height)
         # Publish the map
         self.map_pub.publish(map_msg)
         # Publish the static transform
