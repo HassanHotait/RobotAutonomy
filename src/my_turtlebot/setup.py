@@ -40,6 +40,7 @@ setup(
         'console_scripts': [
             'LidarOdom.py = my_turtlebot.LidarOdom:main',
             'MapPublisher.py = my_turtlebot.MapPublisher:main',
+            'ParticleFilterExplore.py = my_turtlebot.ParticleFilterExplore:main',
             'ParticleFilter.py = my_turtlebot.ParticleFilter:main',
         ],
     },
