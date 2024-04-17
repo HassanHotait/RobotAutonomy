@@ -28,8 +28,8 @@ class ParticleFilter(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        self.n_particles = 1
-        self.n_features = 4
+        self.n_particles = 50
+        self.n_features = 5
         self.max_range = None
         self.particles = np.zeros((self.n_particles, 4)) 
         self.map = None#np.array(imageio.imread('/home/ubuntu/Desktop/RobotAutonomy/src/my_turtlebot/maps/map.pgm'))
@@ -67,9 +67,9 @@ class ParticleFilter(Node):
         Initialize the particles.
         """
         for i in range(self.n_particles):
-            x = self.x0 + np.random.uniform(-1, 1)
-            y = self.y0 + np.random.uniform(-1, 1)
-            theta = self.theta0 + np.random.uniform(-np.pi/4, np.pi/4)
+            x = self.x0 + np.random.uniform(-0.5, 0.5)
+            y = self.y0 + np.random.uniform(-0.5, 0.5)
+            theta = self.theta0 + np.random.uniform(-np.pi/6, np.pi/6)
             weight = 1.0 / self.n_particles
             self.particles[i] = np.array([x, y, theta, weight]).reshape(1, 4)
     def map_callback(self, map_msg):
@@ -103,6 +103,9 @@ class ParticleFilter(Node):
         pc_y = np.hstack(pc_y)
         pc = np.vstack((pc_x, pc_y))
         print(f'PC Shape: {pc.shape}')
+        print(f'Scan Angle Min: {np.rad2deg(scan_msg.angle_min)}')
+        print(f'Scan Angle Max: {np.rad2deg(scan_msg.angle_max)}')
+        print(f'Scan Angle Increment: {np.rad2deg(scan_msg.angle_increment)}')
 
         # Viz In Map 
         if self.map is not None:
@@ -113,21 +116,59 @@ class ParticleFilter(Node):
             plt.arrow(robot_gridpose[0][0], robot_gridpose[1][0], 0.5 * np.cos(self.theta0), 0.5 * np.sin(self.theta0), head_width=5, head_length=5, fc='green', ec='green')  # Plot orientation arrow
             plt.imshow(img,cmap ='gray')
 
+
             for i,point in enumerate(self.particles):
-                particle_grid = self.point_to_map(point)
-                plt.arrow(particle_grid[0][0], particle_grid[1][0], 0.5 * np.cos(point[3]), 0.5 * np.sin(point[3]), head_width=3, head_length=3, fc='red', ec='red')  # Plot orientation arrow
+                particle_grid = self.point_to_map(point[:2].reshape(2,1))
+                print(f'Particle Grid {i} {particle_grid.shape}: {particle_grid}')
+                plt.arrow(particle_grid[0][0], particle_grid[1][0], 0.5 * np.cos(point[2]), 0.5 * np.sin(point[2]), head_width=3, head_length=3, fc='red', ec='red')  # Plot orientation arrow
 
             features = self.particle_features(scan_msg)
-            print(f'PC Shape: {pc.shape}')
+            
+            # for i, feature in enumerate(features):
+            #     print(f'Particle {i}: {feature}')
+
+            
+
+
+            # print(f'PC Shape: {pc.shape}')
             pc_grid = self.point_to_map(pc).T
 
-            feature_indices = [round(np.rad2deg(ang)) for ang in np.linspace(0, np.pi, self.n_features)][:-1]
-            feature_pc = pc_grid[feature_indices]
-            print(f'Feature Indices: {feature_indices}')
 
-            print(f'pc features {feature_pc.shape}: \n{feature_pc}')
+            weights = []
+            for feature in features:
+                feature_error = []
+                for key, value in feature.items():
 
-            print(f'Features {features.shape}: \n{features}')
+                    error = np.linalg.norm(np.array(value).reshape(2,1) - np.array([pc_grid[key][0], pc_grid[key][1]]))
+                    feature_error.append(error)
+                feature_error = np.mean(feature_error)
+                print(f'Feature Error: {feature_error}')
+                weights.append(feature_error)
+
+
+            weights = self.normalize_errors(weights)
+            self.particles[:,3] = weights
+
+            print(f'Weights: {weights}')
+            estimated_pose = self.point_to_map(self.particles[np.argmax(weights)][:2])
+            estimated_orientation = self.particles[np.argmax(weights)][2]
+            plt.arrow(estimated_pose[0][0], estimated_pose[1][0], 0.5 * np.cos(estimated_orientation), 0.5 * np.sin(estimated_orientation), head_width=3, head_length=3, fc='black', ec='black')  # Plot orientation arrow
+
+            print(f'len weights: {len(weights)}')
+            print(f'self.point_to_map(self.particles[:,:2].T): {self.point_to_map(self.particles[:,:2].T).shape}')
+
+            weighted_pose = np.average(self.point_to_map(self.particles[:,:2].T), axis=1, weights=self.particles[:,3])
+
+            print(f'Weighted Pose: {weighted_pose}')
+            plt.arrow(weighted_pose[0], weighted_pose[1], 0.5 * np.cos(estimated_orientation), 0.5 * np.sin(estimated_orientation), head_width=3, head_length=3, fc='yellow', ec='yellow')  # Plot orientation arrow
+
+            # feature_indices = [round(np.rad2deg(ang)) for ang in np.linspace(0, np.pi, self.n_features)][:-1]
+            # feature_pc = pc_grid[feature_indices]
+            # print(f'Feature Indices: {feature_indices}')
+
+            # print(f'pc features {feature_pc.shape}: \n{feature_pc}')
+
+            # print(f'Features {features.shape}: \n{features}')
 
             
             plt.show()
@@ -149,22 +190,24 @@ class ParticleFilter(Node):
     
 
     def get_line_intersection(self, particle_pose):
-        features = []
-        for i,alpha in enumerate(np.linspace(0, np.pi,self.n_features)[:-1]):#, np.pi, 3*np.pi/2]:
+        features = {}
+        alpha_features = []
+        for i,alpha in enumerate(np.linspace(0, np.pi,self.n_features + 1)[:-1]):#, np.pi, 3*np.pi/2]:
             # if alpha == np.pi:
             #     break
-            #alpha -= (2*np.pi)%particle_pose[2]
+            alpha_features = []
+            alpha += particle_pose[2]
             print(f'Alpha {i}: {np.rad2deg(alpha)}')
             if alpha in [0, 2 *np.pi]:
                 l = np.array([0, 1, -particle_pose[1]])
-                self.DrawLine(l, (self.map.info.height, self.map.info.width))
+                #self.DrawLine(l, (self.map.info.height, self.map.info.width))
                 for x in range(int(particle_pose[0]), self.map.info.width):
                     y = -l[2] - l[0] * x
                     if y >= 0 and y < self.map.info.height:
                         if self.map.data[int(x + y * self.map.info.width)] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append(([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)]))
-                            features.append(([x, y]))
+                            alpha_features.append(([x, y]))
                             plt.scatter(x, y, c='blue')
                             break
                     # if x == self.map.info.width - 1:
@@ -175,7 +218,7 @@ class ParticleFilter(Node):
                         if self.map.data[int(x + y * self.map.info.width)] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
-                            features.append(([x, y]))
+                            alpha_features.append(([x, y]))
                             plt.scatter(x, y, c='blue')
                             break
                     # if x == 0 + 1:
@@ -184,7 +227,7 @@ class ParticleFilter(Node):
                 # features.append([self.max_range, self.max_range])
             elif alpha in [np.pi/2, 3*np.pi/2]:
                 l = np.array([1, 0, -particle_pose[0]])
-                self.DrawLine(l, (self.map.info.height, self.map.info.width))
+                #self.DrawLine(l, (self.map.info.height, self.map.info.width))
                 # print(f'Particle Pose {type(particle_pose)}: {particle_pose}')
                 # print(f'Map Height {type(self.map.info.height)}: {self.map.info.height}')
                 for y in range(int(particle_pose[1]), self.map.info.height):
@@ -194,7 +237,7 @@ class ParticleFilter(Node):
                         if self.map.data[int(x + round(y * self.map.info.width))] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
-                            features.append(([x, y]))
+                            alpha_features.append(([x, y]))
                             plt.scatter(x, y, c='blue')
                             break
                             
@@ -206,7 +249,7 @@ class ParticleFilter(Node):
                         if self.map.data[int(x + round(y * self.map.info.width))] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
-                            features.append(([x, y]))
+                            alpha_features.append(([x, y]))
                             plt.scatter(x, y, c='blue')
                             break
                 # features.append([self.max_range, self.max_range])
@@ -216,7 +259,7 @@ class ParticleFilter(Node):
                 a = np.tan(alpha)
                 b = particle_pose[1] - (a * particle_pose[0])
                 l = np.array([a, -1, b])
-                self.DrawLine(l, (self.map.info.height, self.map.info.width))
+                #self.DrawLine(l, (self.map.info.height, self.map.info.width))
 
                 for x in range(round(particle_pose[0]), self.map.info.width):
                     y = round(a*x + b)
@@ -224,10 +267,14 @@ class ParticleFilter(Node):
                         if self.map.data[int(x + round(y * self.map.info.width))] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
-                            features.append(([x, y]))
+                            alpha_features.append(([x, y]))
+                            if np.dot([x - particle_pose[0], y - particle_pose[1]], [np.cos(alpha), np.sin(alpha)]) > 0:
+                                features[round(np.rad2deg(alpha))] = [x, y]
+                            else:
+                                features[round(np.rad2deg(alpha + np.pi))] = [x, y]
                             plt.scatter(x, y, c='blue')
                             break   
-                    # if x == self.map.info.width - 1:
+                    # if x == self.map.info.width - 1
                     #     features.append([max_range*np.cos(alpha), max_range*np.sin(alpha)])
                 for x in range(round(particle_pose[0]),0,-1):
                     y = round(a*x + b)
@@ -235,12 +282,18 @@ class ParticleFilter(Node):
                         if self.map.data[int(x + round(y * self.map.info.width))] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
-                            features.append(([x, y]))
+                            alpha_features.append(([x, y]))
+                            if np.dot([x - particle_pose[0], y - particle_pose[1]], [np.cos(alpha), np.sin(alpha)]) > 0:
+                                features[round(np.rad2deg(alpha))] = [x, y]
+                            else:
+                                features[round(np.rad2deg(alpha + np.pi))] = [x, y]
                             plt.scatter(x, y, c='blue')
                             break
 
                 #plt.show()
-        features = np.vstack(features)
+        #features = np.vstack(features)
+            #features[round(np.rad2deg(alpha))] = alpha_features
+        features = {int(key - np.rad2deg(particle_pose[2])): value for key, value in features.items()}
         return features
             
 
@@ -260,16 +313,34 @@ class ParticleFilter(Node):
             particle_pose = self.point_to_map(particle)
             particle_orientation = particle[2]
             particle_pose = np.array([particle_pose[0][0], particle_pose[1][0], particle_orientation])
-            
-            print(f'Unique Values in Map: {np.unique(self.map.data)}')
-            #particle_pose = np.array([100, self.map.info.height - 10, particle_pose[3]])
-            #alpha_range = 
-            print(f'Alpha Range: {np.rad2deg(np.linspace(0, np.pi,self.n_features))}')
             features.append(self.get_line_intersection(particle_pose))
             
-        features = np.vstack(features)
         return features
 
+    def normalize_errors(self, errors):
+        """
+        Normalize the errors.
+
+        Args:
+            errors (numpy.ndarray): The errors as a 1D array of shape (N,).
+
+        Returns:
+            numpy.ndarray: The normalized errors as a 1D array of shape (N,).
+
+            
+        """
+        max_error = max(errors)
+        normalized_errors = [error / max_error for error in errors]
+        
+        # Step 2: Transform to probability distribution using the inverse of the errors
+        probabilities = [1 - error for error in normalized_errors]
+        
+        # Step 3: Normalize the probabilities to ensure the sum equals 1
+        sum_probabilities = sum(probabilities)
+        normalized_probabilities = [prob / sum_probabilities for prob in probabilities]
+        
+        return normalized_probabilities
+    
 
 
     def motion_model_update(self,cmd_vel_msg):
