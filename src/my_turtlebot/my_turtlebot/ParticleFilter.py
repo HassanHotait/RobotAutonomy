@@ -9,7 +9,7 @@ from rclpy.node import Node
 from nav2_msgs.msg import ParticleCloud
 from nav_msgs.msg import Odometry,OccupancyGrid
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose, TransformStamped
 from sensor_msgs.msg import LaserScan
 import tf2_ros
 from scipy.spatial.transform import Rotation
@@ -27,9 +27,10 @@ class ParticleFilter(Node):
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
         self.n_particles = 50
-        self.n_features = 5
+        self.n_features = 2
         self.max_range = None
         self.particles = np.zeros((self.n_particles, 4)) 
         self.map = None#np.array(imageio.imread('/home/ubuntu/Desktop/RobotAutonomy/src/my_turtlebot/maps/map.pgm'))
@@ -51,7 +52,10 @@ class ParticleFilter(Node):
         self.x0 = transform_scanner.transform.translation.x
         self.y0 = transform_scanner.transform.translation.y
         self.z0 = transform_scanner.transform.translation.z
+        self.rx = transform_scanner.transform.rotation.x
+        self.ry = transform_scanner.transform.rotation.y
         self.theta0 = transform_scanner.transform.rotation.z
+        self.rw = transform_scanner.transform.rotation.w
         self.t0 = self.get_clock().now().nanoseconds / 1e9
 
         # self.scan_msg_prev = None
@@ -102,10 +106,10 @@ class ParticleFilter(Node):
         pc_x = np.hstack(pc_x)
         pc_y = np.hstack(pc_y)
         pc = np.vstack((pc_x, pc_y))
-        print(f'PC Shape: {pc.shape}')
-        print(f'Scan Angle Min: {np.rad2deg(scan_msg.angle_min)}')
-        print(f'Scan Angle Max: {np.rad2deg(scan_msg.angle_max)}')
-        print(f'Scan Angle Increment: {np.rad2deg(scan_msg.angle_increment)}')
+        # print(f'PC Shape: {pc.shape}')
+        # print(f'Scan Angle Min: {np.rad2deg(scan_msg.angle_min)}')
+        # print(f'Scan Angle Max: {np.rad2deg(scan_msg.angle_max)}')
+        # print(f'Scan Angle Increment: {np.rad2deg(scan_msg.angle_increment)}')
 
         # Viz In Map 
         if self.map is not None:
@@ -119,7 +123,7 @@ class ParticleFilter(Node):
 
             for i,point in enumerate(self.particles):
                 particle_grid = self.point_to_map(point[:2].reshape(2,1))
-                print(f'Particle Grid {i} {particle_grid.shape}: {particle_grid}')
+                # print(f'Particle Grid {i} {particle_grid.shape}: {particle_grid}')
                 plt.arrow(particle_grid[0][0], particle_grid[1][0], 0.5 * np.cos(point[2]), 0.5 * np.sin(point[2]), head_width=3, head_length=3, fc='red', ec='red')  # Plot orientation arrow
 
             features = self.particle_features(scan_msg)
@@ -142,25 +146,33 @@ class ParticleFilter(Node):
                     error = np.linalg.norm(np.array(value).reshape(2,1) - np.array([pc_grid[key][0], pc_grid[key][1]]))
                     feature_error.append(error)
                 feature_error = np.mean(feature_error)
-                print(f'Feature Error: {feature_error}')
                 weights.append(feature_error)
 
 
-            weights = self.normalize_errors(weights)
-            self.particles[:,3] = weights
+            probabilities = self.normalize_errors(weights)
+            self.particles[:,3] = probabilities
+            highest_prob_index = np.argmin(probabilities)
 
-            print(f'Weights: {weights}')
-            estimated_pose = self.point_to_map(self.particles[np.argmax(weights)][:2])
-            estimated_orientation = self.particles[np.argmax(weights)][2]
+            print(f'Highest Prob Particle Index: {highest_prob_index}')
+            max_likelihood_particle = self.particles[highest_prob_index][:2]
+            weighted_likelihood_particle = np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])
+            print(f'Max Likelihood Particle: {max_likelihood_particle}')
+
+            print(f'Weights: \n{weights}')
+            print(f'Probabilities: \n{probabilities}')
+            estimated_pose = self.point_to_map(max_likelihood_particle.reshape(2,1))
+            estimated_orientation = self.particles[highest_prob_index][2]
             plt.arrow(estimated_pose[0][0], estimated_pose[1][0], 0.5 * np.cos(estimated_orientation), 0.5 * np.sin(estimated_orientation), head_width=3, head_length=3, fc='black', ec='black')  # Plot orientation arrow
 
+            print(f'Highest Probability Pose: {estimated_pose} - Probability: {probabilities[highest_prob_index]} - Weight: {weights[highest_prob_index]}')
             print(f'len weights: {len(weights)}')
             print(f'self.point_to_map(self.particles[:,:2].T): {self.point_to_map(self.particles[:,:2].T).shape}')
 
             weighted_pose = np.average(self.point_to_map(self.particles[:,:2].T), axis=1, weights=self.particles[:,3])
+            weighted_orientation = np.average(self.particles[:,2], weights=self.particles[:,3])
 
             print(f'Weighted Pose: {weighted_pose}')
-            plt.arrow(weighted_pose[0], weighted_pose[1], 0.5 * np.cos(estimated_orientation), 0.5 * np.sin(estimated_orientation), head_width=3, head_length=3, fc='yellow', ec='yellow')  # Plot orientation arrow
+            plt.arrow(weighted_pose[0], weighted_pose[1], 0.5 * np.cos(weighted_orientation), 0.5 * np.sin(weighted_orientation), head_width=3, head_length=3, fc='yellow', ec='yellow')  # Plot orientation arrow
 
             # feature_indices = [round(np.rad2deg(ang)) for ang in np.linspace(0, np.pi, self.n_features)][:-1]
             # feature_pc = pc_grid[feature_indices]
@@ -169,9 +181,32 @@ class ParticleFilter(Node):
             # print(f'pc features {feature_pc.shape}: \n{feature_pc}')
 
             # print(f'Features {features.shape}: \n{features}')
+            # Create Odometry message
+            # odom = Odometry()
+            # odom.header.stamp = self.get_clock().now().to_msg()
+            # odom.header.frame_id = 'amcl_baselink'
+            # odom.child_frame_id = '???'  # Replace with the correct child frame id
+            # odom.pose.pose.position.x = float(weighted_likelihood_particle[0])
+            # odom.pose.pose.position.y = float(weighted_likelihood_particle[1])
+            # odom.pose.pose.position.z = float(self.z0)
+            # odom.pose.pose.orientation.z = float(weighted_orientation)
+            # odom.twist.twist = self.cmd_vel_msg
+            # # Publish the estimated pose
+            # self.pose_pub.publish(odom)
+                    # Create a transform
+            self.static_transform = TransformStamped()
+            self.static_transform.header.stamp = self.get_clock().now().to_msg()
+            self.static_transform.header.frame_id = 'amcl_baselink'
+            self.static_transform.child_frame_id = 'odom'
+            self.static_transform.transform.translation.x = float(weighted_likelihood_particle[0])
+            self.static_transform.transform.translation.y = float(weighted_likelihood_particle[1])
+            self.static_transform.transform.translation.z = float(self.z0)
+            self.static_transform.transform.rotation.x = float(self.rx)
+            self.static_transform.transform.rotation.y = float(self.ry)
+            self.static_transform.transform.rotation.z = float(weighted_orientation)
+            self.static_transform.transform.rotation.w = float(self.rw)
 
-            
-            plt.show()
+            self.tf_broadcaster.sendTransform(self.static_transform)
 
         return pc
     
@@ -197,7 +232,7 @@ class ParticleFilter(Node):
             #     break
             alpha_features = []
             alpha += particle_pose[2]
-            print(f'Alpha {i}: {np.rad2deg(alpha)}')
+            #print(f'Alpha {i}: {np.rad2deg(alpha)}')
             if alpha in [0, 2 *np.pi]:
                 l = np.array([0, 1, -particle_pose[1]])
                 #self.DrawLine(l, (self.map.info.height, self.map.info.width))
