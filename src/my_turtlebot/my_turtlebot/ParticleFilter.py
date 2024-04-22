@@ -29,7 +29,7 @@ class ParticleFilter(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
-        self.n_particles = 50
+        self.n_particles = 5
         self.n_features = 2
         self.max_range = None
         self.particles = np.zeros((self.n_particles, 4)) 
@@ -114,10 +114,12 @@ class ParticleFilter(Node):
         # Viz In Map 
         if self.map is not None:
             img = 255 - np.array(self.map.data).reshape(self.map.info.height,self.map.info.width)
+            np.save('map.npy', img)
             robot_gridpose = self.point_to_map(np.array([self.x0, self.y0]).reshape(2,1))
 
             print(f'Robot Pose Grid {robot_gridpose.shape}: {robot_gridpose}')
             plt.arrow(robot_gridpose[0][0], robot_gridpose[1][0], 0.5 * np.cos(self.theta0), 0.5 * np.sin(self.theta0), head_width=5, head_length=5, fc='green', ec='green')  # Plot orientation arrow
+            plt.savefig
             plt.imshow(img,cmap ='gray')
 
 
@@ -208,6 +210,8 @@ class ParticleFilter(Node):
 
             self.tf_broadcaster.sendTransform(self.static_transform)
 
+        plt.show()
+
         return pc
     
     def point_to_map(self, pc):
@@ -235,7 +239,7 @@ class ParticleFilter(Node):
             #print(f'Alpha {i}: {np.rad2deg(alpha)}')
             if alpha in [0, 2 *np.pi]:
                 l = np.array([0, 1, -particle_pose[1]])
-                #self.DrawLine(l, (self.map.info.height, self.map.info.width))
+                self.DrawLine(l, (self.map.info.height, self.map.info.width))
                 for x in range(int(particle_pose[0]), self.map.info.width):
                     y = -l[2] - l[0] * x
                     if y >= 0 and y < self.map.info.height:
@@ -262,7 +266,7 @@ class ParticleFilter(Node):
                 # features.append([self.max_range, self.max_range])
             elif alpha in [np.pi/2, 3*np.pi/2]:
                 l = np.array([1, 0, -particle_pose[0]])
-                #self.DrawLine(l, (self.map.info.height, self.map.info.width))
+                self.DrawLine(l, (self.map.info.height, self.map.info.width))
                 # print(f'Particle Pose {type(particle_pose)}: {particle_pose}')
                 # print(f'Map Height {type(self.map.info.height)}: {self.map.info.height}')
                 for y in range(int(particle_pose[1]), self.map.info.height):
@@ -294,7 +298,7 @@ class ParticleFilter(Node):
                 a = np.tan(alpha)
                 b = particle_pose[1] - (a * particle_pose[0])
                 l = np.array([a, -1, b])
-                #self.DrawLine(l, (self.map.info.height, self.map.info.width))
+                self.DrawLine(l, (self.map.info.height, self.map.info.width))
 
                 for x in range(round(particle_pose[0]), self.map.info.width):
                     y = round(a*x + b)
