@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TransformStamped
 from nav_msgs.msg import Odometry
 import tf2_ros
 import numpy as np
@@ -39,10 +39,7 @@ class LocalizationNode(Node):
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
-        self.pose_pub = self.create_publisher(Odometry, '/odom', 1)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
         transform_scanner = self.wait_for_transform('odom', 'base_scan')
 
@@ -57,6 +54,14 @@ class LocalizationNode(Node):
         self.linear_velocity_mps = 0.0
         self.angular_velocity_radps = 0.0
         self.cmd_vel_msg = Twist()
+
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
+        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        self.pose_pub = self.create_publisher(Odometry, '/odom', 1)
+
+        
+
+
 
     def wait_for_transform(self, target_frame, source_frame):
         """
@@ -166,7 +171,7 @@ class LocalizationNode(Node):
             pc1 = Pi(T @ PiInv(pc1))
 
             if self.RMSE(pc1, pc2) < tolerance:
-                return R, t
+                return np.linalg.inv(R), t
  
         print(f'RMSE: {self.RMSE(pc1, pc2)}')
         raise ValueError('ICP did not converge')
@@ -189,19 +194,36 @@ class LocalizationNode(Node):
         Args:
             scan_msg (sensor_msgs.msg.LaserScan): The lidar scan message.
         """
+
+        # Helper functions for homogeneous coordinates
+        def Pi(pts_inhomogenous):
+            # Converts homogeneous points to inhomogeneous coordinates.
+            assert pts_inhomogenous.shape[0] == 3 or pts_inhomogenous.shape[0] == 4, "Input points must be 3xN or 4xN"
+            tmp = pts_inhomogenous[:-1] / pts_inhomogenous[-1]
+            return tmp
+
+        def PiInv(pts_homogenous):
+            # Converts inhomogeneous points to homogeneous coordinates.
+            assert pts_homogenous.shape[0] == 2 or pts_homogenous.shape[0] == 3, "Input points must be 2xN or 3xN"
+            tmp = np.vstack((pts_homogenous, np.ones(pts_homogenous.shape)[0]))
+            return tmp
+        
         delta_t = (self.get_clock().now().nanoseconds / 1e9 - self.t0)
-        delta_x = (self.linear_velocity_mps * np.cos(self.theta0) * delta_t)
-        delta_y = (self.linear_velocity_mps * np.sin(self.theta0) * delta_t)
-        delta_theta = self.angular_velocity_radps * delta_t
+        delta_x = -(self.linear_velocity_mps * np.cos(self.theta0) * delta_t)
+        delta_y = -(self.linear_velocity_mps * np.sin(self.theta0) * delta_t)
+        delta_theta = - self.angular_velocity_radps * delta_t
         T = np.array([
             [np.cos(delta_theta), -np.sin(delta_theta), delta_x],
             [np.sin(delta_theta), np.cos(delta_theta), delta_y],
             [0, 0, 1]
         ])
 
+        
         if self.scan_msg_prev is not None:
             pc_1 = self.process_scan(self.scan_msg_prev)
+            pc_1 = Pi(T @ PiInv(pc_1))
             pc_2 = self.process_scan(scan_msg)
+            #pc2 = motion_update(cmd_vel, pc2)
             R, t = self.icp(pc_1, pc_2, T)
             # T = np.vstack((np.hstack((R, t)), np.array([[0, 0, 1]])))
             print(f'Translation Vector Matrix {t.shape}: \n {t}')
@@ -226,7 +248,7 @@ class LocalizationNode(Node):
         odom = Odometry()
         odom.header.stamp = self.get_clock().now().to_msg()
         odom.header.frame_id = 'lidar_odom'
-        odom.child_frame_id = '???'  # Replace with the correct child frame id
+        odom.child_frame_id = 'odom'  # Replace with the correct child frame id
         odom.pose.pose.position.x = float(x)
         odom.pose.pose.position.y = float(y)
         odom.pose.pose.position.z = float(z)
@@ -242,6 +264,17 @@ class LocalizationNode(Node):
         self.z0 = z
         self.theta0 = theta
         self.scan_msg_prev = scan_msg
+
+        self.static_transform = TransformStamped()
+        self.static_transform.header.stamp = self.get_clock().now().to_msg()
+        self.static_transform.header.frame_id = 'icp_basescan'
+        self.static_transform.child_frame_id = 'odom'
+        self.static_transform.transform.translation.x = float(x)
+        self.static_transform.transform.translation.y = float(y)
+        self.static_transform.transform.translation.z = float(z)
+        self.static_transform.transform.rotation.z = float(theta)
+
+        self.tf_broadcaster.sendTransform(self.static_transform)
 
 def main(args=None):
     rclpy.init(args=args)

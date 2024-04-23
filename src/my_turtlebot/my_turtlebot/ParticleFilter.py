@@ -9,7 +9,7 @@ from rclpy.node import Node
 from nav2_msgs.msg import ParticleCloud
 from nav_msgs.msg import Odometry,OccupancyGrid
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy
-from geometry_msgs.msg import Pose, TransformStamped
+from geometry_msgs.msg import Pose, TransformStamped, Twist
 from sensor_msgs.msg import LaserScan
 import tf2_ros
 from scipy.spatial.transform import Rotation
@@ -29,8 +29,8 @@ class ParticleFilter(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
-        self.n_particles = 5
-        self.n_features = 2
+        self.n_particles = 20
+        self.n_features = 4
         self.max_range = None
         self.particles = np.zeros((self.n_particles, 4)) 
         self.map = None#np.array(imageio.imread('/home/ubuntu/Desktop/RobotAutonomy/src/my_turtlebot/maps/map.pgm'))
@@ -42,7 +42,7 @@ class ParticleFilter(Node):
         self.scan_sub = self.create_subscription(LaserScan, '/scan', self.process_scan, 10)
         map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
         self.map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, map_qos)
-        self.cmd_sub = self.create_subscription(Pose, '/cmd_vel', self.motion_model_update, 10)
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 10)
         self.particle_pub = self.create_publisher(ParticleCloud, '/particle_cloud', 10)
         self.pose_pub = self.create_publisher(Odometry, '/amcl_pose', 1)
 
@@ -78,7 +78,7 @@ class ParticleFilter(Node):
             self.particles[i] = np.array([x, y, theta, weight]).reshape(1, 4)
     def map_callback(self, map_msg):
         self.map = map_msg
-        print('Map received')
+        #print('Map received')
 
     def process_scan(self, scan_msg):
         """
@@ -114,12 +114,11 @@ class ParticleFilter(Node):
         # Viz In Map 
         if self.map is not None:
             img = 255 - np.array(self.map.data).reshape(self.map.info.height,self.map.info.width)
-            np.save('map.npy', img)
+            #np.save('map.npy', img)
             robot_gridpose = self.point_to_map(np.array([self.x0, self.y0]).reshape(2,1))
 
-            print(f'Robot Pose Grid {robot_gridpose.shape}: {robot_gridpose}')
+            #print(f'Robot Pose Grid {robot_gridpose.shape}: {robot_gridpose}')
             plt.arrow(robot_gridpose[0][0], robot_gridpose[1][0], 0.5 * np.cos(self.theta0), 0.5 * np.sin(self.theta0), head_width=5, head_length=5, fc='green', ec='green')  # Plot orientation arrow
-            plt.savefig
             plt.imshow(img,cmap ='gray')
 
 
@@ -127,6 +126,7 @@ class ParticleFilter(Node):
                 particle_grid = self.point_to_map(point[:2].reshape(2,1))
                 # print(f'Particle Grid {i} {particle_grid.shape}: {particle_grid}')
                 plt.arrow(particle_grid[0][0], particle_grid[1][0], 0.5 * np.cos(point[2]), 0.5 * np.sin(point[2]), head_width=3, head_length=3, fc='red', ec='red')  # Plot orientation arrow
+                #print(f'Candidate Particle Plotted')
 
             features = self.particle_features(scan_msg)
             
@@ -155,25 +155,26 @@ class ParticleFilter(Node):
             self.particles[:,3] = probabilities
             highest_prob_index = np.argmin(probabilities)
 
-            print(f'Highest Prob Particle Index: {highest_prob_index}')
+            #print(f'Highest Prob Particle Index: {highest_prob_index}')
             max_likelihood_particle = self.particles[highest_prob_index][:2]
             weighted_likelihood_particle = np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])
-            print(f'Max Likelihood Particle: {max_likelihood_particle}')
+            #print(f'Max Likelihood Particle: {max_likelihood_particle}')
 
-            print(f'Weights: \n{weights}')
-            print(f'Probabilities: \n{probabilities}')
+            # print(f'Weights: \n{weights}')
+            # print(f'Probabilities: \n{probabilities}')
             estimated_pose = self.point_to_map(max_likelihood_particle.reshape(2,1))
             estimated_orientation = self.particles[highest_prob_index][2]
             plt.arrow(estimated_pose[0][0], estimated_pose[1][0], 0.5 * np.cos(estimated_orientation), 0.5 * np.sin(estimated_orientation), head_width=3, head_length=3, fc='black', ec='black')  # Plot orientation arrow
 
-            print(f'Highest Probability Pose: {estimated_pose} - Probability: {probabilities[highest_prob_index]} - Weight: {weights[highest_prob_index]}')
-            print(f'len weights: {len(weights)}')
-            print(f'self.point_to_map(self.particles[:,:2].T): {self.point_to_map(self.particles[:,:2].T).shape}')
+            # print(f'Highest Probability Pose: {estimated_pose} - Probability: {probabilities[highest_prob_index]} - Weight: {weights[highest_prob_index]}')
+            # print(f'len weights: {len(weights)}')
+            # print(f'self.point_to_map(self.particles[:,:2].T): {self.point_to_map(self.particles[:,:2].T).shape}')
 
             weighted_pose = np.average(self.point_to_map(self.particles[:,:2].T), axis=1, weights=self.particles[:,3])
             weighted_orientation = np.average(self.particles[:,2], weights=self.particles[:,3])
 
-            print(f'Weighted Pose: {weighted_pose}')
+            # print(f'Weighted Pose [m]: {np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])}')
+            # print(f'Weighted Pose Grid: {weighted_pose}')
             plt.arrow(weighted_pose[0], weighted_pose[1], 0.5 * np.cos(weighted_orientation), 0.5 * np.sin(weighted_orientation), head_width=3, head_length=3, fc='yellow', ec='yellow')  # Plot orientation arrow
 
             # feature_indices = [round(np.rad2deg(ang)) for ang in np.linspace(0, np.pi, self.n_features)][:-1]
@@ -198,7 +199,7 @@ class ParticleFilter(Node):
                     # Create a transform
             self.static_transform = TransformStamped()
             self.static_transform.header.stamp = self.get_clock().now().to_msg()
-            self.static_transform.header.frame_id = 'amcl_baselink'
+            self.static_transform.header.frame_id = 'amcl_basescan'
             self.static_transform.child_frame_id = 'odom'
             self.static_transform.transform.translation.x = float(weighted_likelihood_particle[0])
             self.static_transform.transform.translation.y = float(weighted_likelihood_particle[1])
@@ -210,7 +211,7 @@ class ParticleFilter(Node):
 
             self.tf_broadcaster.sendTransform(self.static_transform)
 
-        plt.show()
+        #plt.show()
 
         return pc
     
@@ -224,6 +225,10 @@ class ParticleFilter(Node):
         Returns:
             numpy.ndarray: The grid coordinates as a 1D array of shape (2,).
         """
+
+
+
+        #print(f'PC In Conversion to grid {pc.shape}: {pc}')
         pc_grid = np.array([self.map.info.width/2,self.map.info.height/2]).reshape(2,1) + pc/self.map.info.resolution
         return pc_grid
     
@@ -266,7 +271,7 @@ class ParticleFilter(Node):
                 # features.append([self.max_range, self.max_range])
             elif alpha in [np.pi/2, 3*np.pi/2]:
                 l = np.array([1, 0, -particle_pose[0]])
-                self.DrawLine(l, (self.map.info.height, self.map.info.width))
+                #self.DrawLine(l, (self.map.info.height, self.map.info.width))
                 # print(f'Particle Pose {type(particle_pose)}: {particle_pose}')
                 # print(f'Map Height {type(self.map.info.height)}: {self.map.info.height}')
                 for y in range(int(particle_pose[1]), self.map.info.height):
@@ -298,7 +303,7 @@ class ParticleFilter(Node):
                 a = np.tan(alpha)
                 b = particle_pose[1] - (a * particle_pose[0])
                 l = np.array([a, -1, b])
-                self.DrawLine(l, (self.map.info.height, self.map.info.width))
+                #self.DrawLine(l, (self.map.info.height, self.map.info.width))
 
                 for x in range(round(particle_pose[0]), self.map.info.width):
                     y = round(a*x + b)
@@ -349,9 +354,12 @@ class ParticleFilter(Node):
 
         features = []
         for particle in self.particles:
-            particle_pose = self.point_to_map(particle)
+            #print(f'Particle {particle.shape}: \n{particle}')
+            particle_pose = self.point_to_map(particle[:2].reshape(2,1))
+            #print(f'Particle Pose {particle_pose.shape}: \n{particle_pose}')
             particle_orientation = particle[2]
             particle_pose = np.array([particle_pose[0][0], particle_pose[1][0], particle_orientation])
+            #plt.scatter(particle_pose[0], particle_pose[1], c='orange')
             features.append(self.get_line_intersection(particle_pose))
             
         return features
@@ -383,19 +391,22 @@ class ParticleFilter(Node):
 
 
     def motion_model_update(self,cmd_vel_msg):
+
         delta_t = (self.get_clock().now().nanoseconds / 1e9 - self.t0)
         delta_x = (cmd_vel_msg.linear.x * np.cos(self.theta0) * delta_t)
         delta_y = (cmd_vel_msg.linear.x * np.sin(self.theta0) * delta_t)
         delta_theta = cmd_vel_msg.angular.z * delta_t
 
-        self.particles[:,0] +=  delta_x
-        self.particles[:,1] +=  delta_y
-        self.particles[:,2] +=  delta_theta
+        self.particles[:,0] -=  delta_x
+        self.particles[:,1] -=  delta_y
+        self.particles[:,2] -=  delta_theta
 
         self.t0 = self.get_clock().now().nanoseconds / 1e9
         self.x0 += delta_x
         self.y0 += delta_y
         self.theta0 += delta_theta
+        print(f'--------------------------------- CMD VEL ------------------------------')
+        print(f'Delta X: {delta_x}, Delta Y: {delta_y}, Delta Theta: {delta_theta}')
 
         #self.measurement_model_update()
 
@@ -440,7 +451,7 @@ class ParticleFilter(Node):
         P = [in_frame(l_im) for l_im in lines if in_frame(l_im) is not None]
         if (len(P)==0):
             print("Line is completely outside image")
-        plt.plot(*np.array(P).T)
+            #plt.plot(*np.array(P).T)
 
 
 
