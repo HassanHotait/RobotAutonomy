@@ -13,6 +13,7 @@ import tf2_geometry_msgs
 import numpy as np
 from scipy.spatial.distance import cdist
 from scipy.spatial.transform import Rotation
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy
 
 class MappingNode(Node):
     def __init__(self):
@@ -23,7 +24,8 @@ class MappingNode(Node):
 
         # self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
         self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
-        self.map_pub = self.create_publisher(OccupancyGrid, '/map2', 10)
+        map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
+        self.map_pub = self.create_publisher(OccupancyGrid, '/my_map', map_qos)
 
         # transform_scanner = self.wait_for_transform('odom', 'base_scan')
         # transform_map = self.wait_for_transform('odom')
@@ -46,7 +48,7 @@ class MappingNode(Node):
 
         self.map_msg0 = OccupancyGrid()
         self.map_msg0.header.stamp = self.get_clock().now().to_msg()
-        self.map_msg0.header.frame_id = 'map'
+        self.map_msg0.header.frame_id = 'my_map'
         self.map_msg0.info.resolution = self.resolution
         self.map_msg0.info.width = int(self.width_m / self.resolution)
         self.map_msg0.info.height = int(self.height_m / self.resolution)
@@ -63,8 +65,8 @@ class MappingNode(Node):
         # Create a transform
         self.static_transform = TransformStamped()
         self.static_transform.header.stamp = self.get_clock().now().to_msg()
-        self.static_transform.header.frame_id = 'odom'
-        self.static_transform.child_frame_id = 'map'
+        self.static_transform.header.frame_id = 'my_map'
+        self.static_transform.child_frame_id = 'odom'
         self.static_transform.transform.translation.x = T0.transform.translation.x
         self.static_transform.transform.translation.y = T0.transform.translation.y
         self.static_transform.transform.translation.z = T0.transform.translation.z
