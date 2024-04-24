@@ -115,7 +115,7 @@ def generate_launch_description():
     declare_rviz_config_file_cmd = DeclareLaunchArgument(
         'rviz_config_file',
         default_value=os.path.join(
-            my_turtlebot_dir, 'rviz', 'my_rviz_launch.rviz'),
+            my_turtlebot_dir, 'rviz', 'rviz_launch.rviz'),
         description='Full path to the RVIZ config file to use')
 
 
@@ -195,20 +195,16 @@ def generate_launch_description():
 
     rviz_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(launch_dir, 'my_rviz_launch.py')),
+            os.path.join(launch_dir, 'rviz_launch.py')),
         condition=IfCondition(use_rviz),
         launch_arguments={'namespace': namespace,
                           'use_namespace': use_namespace,
                           'rviz_config': rviz_config_file}.items())
 
-# Declare the remapped topic name
 
 
     # Wrap the included launch description with a PrefixAction
-    bringup_cmd = GroupAction (
-        actions = [
-        SetRemap('/map', '/my_map'),
-        IncludeLaunchDescription(
+    bringup_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(launch_dir, 'bringup_launch.py')
         ),
@@ -222,14 +218,14 @@ def generate_launch_description():
                           'use_composition': use_composition,
                           'use_respawn': use_respawn}.items()
     )
-    ])
+    
 
-    mapping_node = Node(
+    myamcl_node = Node(
         package='my_turtlebot',
-        executable='MapPublisher.py',
-        name='MapPublisher',
+        executable='ParticleFilter.py',
+        name='ParticleFilter',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time}]  # Remap the topic here
+        parameters=[{'use_sim_time': use_sim_time}]  
     )
 
     # Define your node with the remapped topic
@@ -265,7 +261,7 @@ def generate_launch_description():
     ld.add_action(start_robot_state_publisher_cmd)
     ld.add_action(rviz_cmd)
     ld.add_action(bringup_cmd)
-    ld.add_action(mapping_node)
+    ld.add_action(myamcl_node)
 
 
     return ld

@@ -22,18 +22,6 @@ class MappingNode(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        # self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
-        map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
-        self.map_pub = self.create_publisher(OccupancyGrid, '/my_map', map_qos)
-
-        # transform_scanner = self.wait_for_transform('odom', 'base_scan')
-        # transform_map = self.wait_for_transform('odom')
-
-        # self.x0 = transform_scanner.transform.translation.x
-        # self.y0 = transform_scanner.transform.translation.y
-        # self.z0 = transform_scanner.transform.translation.z
-        # self.theta0 = transform_scanner.transform.rotation.z
         self.t0 = self.get_clock().now().nanoseconds / 1e9
         self.scan_msg_prev = None
         self.linear_velocity_mps = 0.0
@@ -74,6 +62,20 @@ class MappingNode(Node):
         self.static_transform.transform.rotation.y = T0.transform.rotation.y
         self.static_transform.transform.rotation.z = T0.transform.rotation.z
         self.static_transform.transform.rotation.w = T0.transform.rotation.w
+
+        # self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
+        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
+        self.map_pub = self.create_publisher(OccupancyGrid, '/my_map', map_qos)
+
+        # transform_scanner = self.wait_for_transform('odom', 'base_scan')
+        # transform_map = self.wait_for_transform('odom')
+
+        # self.x0 = transform_scanner.transform.translation.x
+        # self.y0 = transform_scanner.transform.translation.y
+        # self.z0 = transform_scanner.transform.translation.z
+        # self.theta0 = transform_scanner.transform.rotation.z
+
 
     def wait_for_transform(self, target_frame, source_frame):
         """

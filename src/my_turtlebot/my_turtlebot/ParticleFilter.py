@@ -38,13 +38,7 @@ class ParticleFilter(Node):
         # Create a QoS profile with reliability set to the same as the publisher
         
 
-        # Subscribe to the '/particle_cloud' topic with the specified QoS profile
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.process_scan, 10)
-        map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
-        self.map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, map_qos)
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 10)
-        self.particle_pub = self.create_publisher(ParticleCloud, '/particle_cloud', 10)
-        self.pose_pub = self.create_publisher(Odometry, '/amcl_pose', 1)
+
 
         transform_scanner = self.wait_for_transform('odom', 'base_scan')
 
@@ -65,6 +59,14 @@ class ParticleFilter(Node):
         # self.cmd_vel_msg = Twist()
 
         self.init_particles()
+
+        # Subscribe to the '/particle_cloud' topic with the specified QoS profile
+        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.process_scan, 10)
+        map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
+        self.map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, map_qos)
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 10)
+        self.particle_pub = self.create_publisher(ParticleCloud, '/particle_cloud', 10)
+        self.pose_pub = self.create_publisher(Odometry, '/amcl_pose', 1)
 
     def init_particles(self):
         """
@@ -402,9 +404,9 @@ class ParticleFilter(Node):
         self.particles[:,2] -=  delta_theta
 
         self.t0 = self.get_clock().now().nanoseconds / 1e9
-        self.x0 += delta_x
-        self.y0 += delta_y
-        self.theta0 += delta_theta
+        self.x0 -= delta_x
+        self.y0 -= delta_y
+        self.theta0 -= delta_theta
         print(f'--------------------------------- CMD VEL ------------------------------')
         print(f'Delta X: {delta_x}, Delta Y: {delta_y}, Delta Theta: {delta_theta}')
 
