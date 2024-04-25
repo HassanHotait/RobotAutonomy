@@ -6,10 +6,10 @@ from turtle import position
 from matplotlib import cm
 import rclpy
 from rclpy.node import Node
-from nav2_msgs.msg import ParticleCloud
-from nav_msgs.msg import Odometry,OccupancyGrid
+from nav2_msgs.msg import Particle,ParticleCloud
+from nav_msgs.msg import Odometry,OccupancyGrid, Path
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy
-from geometry_msgs.msg import Pose, TransformStamped, Twist
+from geometry_msgs.msg import Pose, TransformStamped, Twist, PoseStamped
 from sensor_msgs.msg import LaserScan
 import tf2_ros
 from scipy.spatial.transform import Rotation
@@ -29,16 +29,15 @@ class ParticleFilter(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
-        self.n_particles = 20
-        self.n_features = 4
+        self.n_particles = 50
+        self.n_features = 2
         self.max_range = None
         self.particles = np.zeros((self.n_particles, 4)) 
         self.map = None#np.array(imageio.imread('/home/ubuntu/Desktop/RobotAutonomy/src/my_turtlebot/maps/map.pgm'))
+        self.path_msg = Path()
+        self.path_msg.header.frame_id = 'odom'
 
-        # Create a QoS profile with reliability set to the same as the publisher
-        
-
-
+        self.path_list = []
 
         transform_scanner = self.wait_for_transform('odom', 'base_scan')
 
@@ -46,17 +45,15 @@ class ParticleFilter(Node):
         self.x0 = transform_scanner.transform.translation.x
         self.y0 = transform_scanner.transform.translation.y
         self.z0 = transform_scanner.transform.translation.z
+
+        print(f'Init Pose: {self.x0, self.y0}')
+
+        R = Rotation.from_quat([transform_scanner.transform.rotation.x,transform_scanner.transform.rotation.y,transform_scanner.transform.rotation.z,transform_scanner.transform.rotation.w]).as_matrix()
         self.rx = transform_scanner.transform.rotation.x
         self.ry = transform_scanner.transform.rotation.y
-        self.theta0 = transform_scanner.transform.rotation.z
+        self.theta0 = np.arctan2(R[1, 0], R[0, 0])
         self.rw = transform_scanner.transform.rotation.w
         self.t0 = self.get_clock().now().nanoseconds / 1e9
-
-        # self.scan_msg_prev = None
-        # self.lidar_odom = None
-        # self.linear_velocity_mps = 0.0
-        # self.angular_velocity_radps = 0.0
-        # self.cmd_vel_msg = Twist()
 
         self.init_particles()
 
@@ -66,7 +63,8 @@ class ParticleFilter(Node):
         self.map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, map_qos)
         self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 10)
         self.particle_pub = self.create_publisher(ParticleCloud, '/particle_cloud', 10)
-        self.pose_pub = self.create_publisher(Odometry, '/amcl_pose', 1)
+        self.pose_pub = self.create_publisher(Odometry, '/amcl_pose', 10)
+        self.path_pub = self.create_publisher(Path, '/path', 10)
 
     def init_particles(self):
         """
@@ -155,29 +153,58 @@ class ParticleFilter(Node):
 
             probabilities = self.normalize_errors(weights)
             self.particles[:,3] = probabilities
+
+            msg_particle_cloud = ParticleCloud()
+            msg_particle_cloud.header.stamp = self.get_clock().now().to_msg()
+            msg_particle_cloud.header.frame_id = 'odom'
+            msg_particle_cloud.particles = []
+            for particle in self.particles:
+                p = Particle()
+                p.pose.position.x = particle[0]
+                p.pose.position.y = particle[1]
+                p.pose.position.z = self.z0
+                p.pose.orientation.z = particle[2]
+                p.weight = particle[3]
+                msg_particle_cloud.particles.append(p)
+            self.particle_pub.publish(msg_particle_cloud)
             highest_prob_index = np.argmin(probabilities)
 
             #print(f'Highest Prob Particle Index: {highest_prob_index}')
-            max_likelihood_particle = self.particles[highest_prob_index][:2]
+            # max_likelihood_particle = self.particles[highest_prob_index][:2]
             weighted_likelihood_particle = np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])
-            #print(f'Max Likelihood Particle: {max_likelihood_particle}')
+            # #print(f'Max Likelihood Particle: {max_likelihood_particle}')
+            print(f'Weighted Likelihood Particle: {weighted_likelihood_particle}')
 
-            # print(f'Weights: \n{weights}')
-            # print(f'Probabilities: \n{probabilities}')
-            estimated_pose = self.point_to_map(max_likelihood_particle.reshape(2,1))
-            estimated_orientation = self.particles[highest_prob_index][2]
-            plt.arrow(estimated_pose[0][0], estimated_pose[1][0], 0.5 * np.cos(estimated_orientation), 0.5 * np.sin(estimated_orientation), head_width=3, head_length=3, fc='black', ec='black')  # Plot orientation arrow
+            path_pose = PoseStamped()
+            path_pose.pose.position.x = weighted_likelihood_particle[0]
+            path_pose.pose.position.y = weighted_likelihood_particle[1]
+            path_pose.pose.position.x = self.z0
+            self.path_list.append(path_pose)
+            self.path_msg.poses = self.path_list
+
+            self.path_msg.header.stamp = self.get_clock().now().to_msg()
+            self.path_pub.publish(self.path_msg)
+
+
+            # # print(f'Weights: \n{weights}')
+            # # print(f'Probabilities: \n{probabilities}')
+            # estimated_pose = self.point_to_map(max_likelihood_particle.reshape(2,1))
+            # estimated_orientation = self.particles[highest_prob_index][2]
+            # plt.arrow(estimated_pose[0][0], estimated_pose[1][0], 0.5 * np.cos(estimated_orientation), 0.5 * np.sin(estimated_orientation), head_width=3, head_length=3, fc='black', ec='black')  # Plot orientation arrow
 
             # print(f'Highest Probability Pose: {estimated_pose} - Probability: {probabilities[highest_prob_index]} - Weight: {weights[highest_prob_index]}')
             # print(f'len weights: {len(weights)}')
             # print(f'self.point_to_map(self.particles[:,:2].T): {self.point_to_map(self.particles[:,:2].T).shape}')
 
-            weighted_pose = np.average(self.point_to_map(self.particles[:,:2].T), axis=1, weights=self.particles[:,3])
-            weighted_orientation = np.average(self.particles[:,2], weights=self.particles[:,3])
+
+            weighted_pose = self.point_to_map(weighted_likelihood_particle.reshape(2,1))
+            print(f'Weighted Pose Grid {weighted_pose.shape}: {weighted_pose}')
+            weighted_orientation = np.average(self.particles[:,2], axis=0,weights=self.particles[:,3])
+            print(f'Weighted Orientation {weighted_orientation.shape}: {weighted_orientation}')
 
             # print(f'Weighted Pose [m]: {np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])}')
             # print(f'Weighted Pose Grid: {weighted_pose}')
-            plt.arrow(weighted_pose[0], weighted_pose[1], 0.5 * np.cos(weighted_orientation), 0.5 * np.sin(weighted_orientation), head_width=3, head_length=3, fc='yellow', ec='yellow')  # Plot orientation arrow
+            #plt.arrow(weighted_pose[0], weighted_pose[1], 0.5 * np.cos(weighted_orientation), 0.5 * np.sin(weighted_orientation), head_width=3, head_length=3, fc='yellow', ec='yellow')  # Plot orientation arrow
 
             # feature_indices = [round(np.rad2deg(ang)) for ang in np.linspace(0, np.pi, self.n_features)][:-1]
             # feature_pc = pc_grid[feature_indices]
@@ -201,8 +228,8 @@ class ParticleFilter(Node):
                     # Create a transform
             self.static_transform = TransformStamped()
             self.static_transform.header.stamp = self.get_clock().now().to_msg()
-            self.static_transform.header.frame_id = 'amcl_basescan'
-            self.static_transform.child_frame_id = 'odom'
+            self.static_transform.header.frame_id = 'odom'
+            self.static_transform.child_frame_id = 'amcl_basescan'
             self.static_transform.transform.translation.x = float(weighted_likelihood_particle[0])
             self.static_transform.transform.translation.y = float(weighted_likelihood_particle[1])
             self.static_transform.transform.translation.z = float(self.z0)
@@ -296,7 +323,7 @@ class ParticleFilter(Node):
                             #print(f'Intersection at: {x, y}')
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
                             alpha_features.append(([x, y]))
-                            plt.scatter(x, y, c='blue')
+                            #plt.scatter(x, y, c='blue')
                             break
                 # features.append([self.max_range, self.max_range])
                     # if y == 0 + 1:
@@ -318,7 +345,7 @@ class ParticleFilter(Node):
                                 features[round(np.rad2deg(alpha))] = [x, y]
                             else:
                                 features[round(np.rad2deg(alpha + np.pi))] = [x, y]
-                            plt.scatter(x, y, c='blue')
+                            #plt.scatter(x, y, c='blue')
                             break   
                     # if x == self.map.info.width - 1
                     #     features.append([max_range*np.cos(alpha), max_range*np.sin(alpha)])
@@ -399,14 +426,16 @@ class ParticleFilter(Node):
         delta_y = (cmd_vel_msg.linear.x * np.sin(self.theta0) * delta_t)
         delta_theta = cmd_vel_msg.angular.z * delta_t
 
-        self.particles[:,0] -=  delta_x
-        self.particles[:,1] -=  delta_y
-        self.particles[:,2] -=  delta_theta
+        self.particles[:,0] +=  delta_x
+        self.particles[:,1] +=  delta_y
+        self.particles[:,2] +=  delta_theta
 
         self.t0 = self.get_clock().now().nanoseconds / 1e9
-        self.x0 -= delta_x
-        self.y0 -= delta_y
-        self.theta0 -= delta_theta
+
+        weighted_pose = np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])
+        self.x0 = weighted_pose[0]
+        self.y0 = weighted_pose[1]
+        self.theta0 = np.average(self.particles[:,2], weights=self.particles[:,3])
         print(f'--------------------------------- CMD VEL ------------------------------')
         print(f'Delta X: {delta_x}, Delta Y: {delta_y}, Delta Theta: {delta_theta}')
 
