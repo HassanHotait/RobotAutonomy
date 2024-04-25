@@ -38,6 +38,7 @@ class ParticleFilter(Node):
         self.path_msg.header.frame_id = 'odom'
 
         self.path_list = []
+        self.absolute_pose = None
 
         transform_scanner = self.wait_for_transform('odom', 'base_scan')
 
@@ -90,56 +91,49 @@ class ParticleFilter(Node):
         Returns:
             numpy.ndarray: The point cloud as a 2D array of shape (2, N).
         """
+
+        ## Process the scan message and convert it to a point cloud
         pc_x = []
         pc_y = []
 
         # Range to Point Cloud
-        for i, range in enumerate(scan_msg.ranges):
-            if range > scan_msg.range_max:
+        for i, r in enumerate(scan_msg.ranges):
+            if r > scan_msg.range_max:
                 pc_x.append(scan_msg.range_max * np.cos(scan_msg.angle_min + (i * scan_msg.angle_increment)))
                 pc_y.append(scan_msg.range_max * np.sin(scan_msg.angle_min + (i * scan_msg.angle_increment)))
             else:
-                pc_x.append(range * np.cos(scan_msg.angle_min + (i * scan_msg.angle_increment)))
-                pc_y.append(range * np.sin(scan_msg.angle_min + (i * scan_msg.angle_increment)))
+                pc_x.append(r * np.cos(scan_msg.angle_min + (i * scan_msg.angle_increment)))
+                pc_y.append(r * np.sin(scan_msg.angle_min + (i * scan_msg.angle_increment)))
 
         # Return Point Cloud (2, N)
         pc_x = np.hstack(pc_x)
         pc_y = np.hstack(pc_y)
         pc = np.vstack((pc_x, pc_y))
-        # print(f'PC Shape: {pc.shape}')
-        # print(f'Scan Angle Min: {np.rad2deg(scan_msg.angle_min)}')
-        # print(f'Scan Angle Max: {np.rad2deg(scan_msg.angle_max)}')
-        # print(f'Scan Angle Increment: {np.rad2deg(scan_msg.angle_increment)}')
 
-        # Viz In Map 
-        if self.map is not None:
-            img = 255 - np.array(self.map.data).reshape(self.map.info.height,self.map.info.width)
-            #np.save('map.npy', img)
-            robot_gridpose = self.point_to_map(np.array([self.x0, self.y0]).reshape(2,1))
+        # # Viz In Map 
+        # if self.map is not None:
+        #     img = 255 - np.array(self.map.data).reshape(self.map.info.height,self.map.info.width)
+        #     #np.save('map.npy', img)
+        #     robot_gridpose = self.point_to_map(np.array([self.x0, self.y0]).reshape(2,1))
 
-            #print(f'Robot Pose Grid {robot_gridpose.shape}: {robot_gridpose}')
-            plt.arrow(robot_gridpose[0][0], robot_gridpose[1][0], 0.5 * np.cos(self.theta0), 0.5 * np.sin(self.theta0), head_width=5, head_length=5, fc='green', ec='green')  # Plot orientation arrow
-            plt.imshow(img,cmap ='gray')
+        #     #print(f'Robot Pose Grid {robot_gridpose.shape}: {robot_gridpose}')
+        #     plt.arrow(robot_gridpose[0][0], robot_gridpose[1][0], 0.5 * np.cos(self.theta0), 0.5 * np.sin(self.theta0), head_width=5, head_length=5, fc='green', ec='green')  # Plot orientation arrow
+        #     plt.imshow(img,cmap ='gray')
 
 
-            for i,point in enumerate(self.particles):
-                particle_grid = self.point_to_map(point[:2].reshape(2,1))
-                # print(f'Particle Grid {i} {particle_grid.shape}: {particle_grid}')
-                plt.arrow(particle_grid[0][0], particle_grid[1][0], 0.5 * np.cos(point[2]), 0.5 * np.sin(point[2]), head_width=3, head_length=3, fc='red', ec='red')  # Plot orientation arrow
+        #     for i,point in enumerate(self.particles):
+        #         particle_grid = self.point_to_map(point[:2].reshape(2,1))
+        #         # print(f'Particle Grid {i} {particle_grid.shape}: {particle_grid}')
+        #         plt.arrow(particle_grid[0][0], particle_grid[1][0], 0.5 * np.cos(point[2]), 0.5 * np.sin(point[2]), head_width=3, head_length=3, fc='red', ec='red')  # Plot orientation arrow
                 #print(f'Candidate Particle Plotted')
 
+        if self.map is not None:
+            # Get Features with Raycasting
             features = self.particle_features(scan_msg)
-            
-            # for i, feature in enumerate(features):
-            #     print(f'Particle {i}: {feature}')
-
-            
-
-
-            # print(f'PC Shape: {pc.shape}')
+            #Absolute Pose to Grid Pose [m] -> [cells]
             pc_grid = self.point_to_map(pc).T
 
-
+            # Update Weights
             weights = []
             for feature in features:
                 feature_error = []
@@ -149,11 +143,10 @@ class ParticleFilter(Node):
                     feature_error.append(error)
                 feature_error = np.mean(feature_error)
                 weights.append(feature_error)
-
-
             probabilities = self.normalize_errors(weights)
             self.particles[:,3] = probabilities
 
+            # Publish Particle Cloud For RVIZ Visualization
             msg_particle_cloud = ParticleCloud()
             msg_particle_cloud.header.stamp = self.get_clock().now().to_msg()
             msg_particle_cloud.header.frame_id = 'odom'
@@ -163,84 +156,56 @@ class ParticleFilter(Node):
                 p.pose.position.x = particle[0]
                 p.pose.position.y = particle[1]
                 p.pose.position.z = self.z0
-                p.pose.orientation.z = particle[2]
+                particle_rotations = Rotation.from_euler('z', particle[2]).as_quat()
+                p.pose.orientation.x = particle_rotations[0]
+                p.pose.orientation.y = particle_rotations[1]
+                p.pose.orientation.z = particle_rotations[2]
+                p.pose.orientation.w = particle_rotations[3]
                 p.weight = particle[3]
                 msg_particle_cloud.particles.append(p)
             self.particle_pub.publish(msg_particle_cloud)
-            highest_prob_index = np.argmin(probabilities)
 
-            #print(f'Highest Prob Particle Index: {highest_prob_index}')
-            # max_likelihood_particle = self.particles[highest_prob_index][:2]
-            weighted_likelihood_particle = np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])
-            # #print(f'Max Likelihood Particle: {max_likelihood_particle}')
-            print(f'Weighted Likelihood Particle: {weighted_likelihood_particle}')
 
+            # weighted_likelihood_particle = np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])
+            # weighted_pose = self.point_to_map(weighted_likelihood_particle.reshape(2,1))
+            # weighted_orientation = np.average(self.particles[:,2], axis=0,weights=self.particles[:,3])
+            # print(f'Weighted Likelihood Particle: {weighted_likelihood_particle}')
+            # print(f'Weighted Pose Grid {weighted_pose.shape}: {weighted_pose}')
+            # print(f'Weighted Orientation {weighted_orientation.shape}: {weighted_orientation}')
+            self.absolute_pose =  [0, 0, 0]
+            for i in range(len(msg_particle_cloud.particles)):
+                weight = msg_particle_cloud.particles[i].weight
+                self.absolute_pose[0] += msg_particle_cloud.particles[i].pose.position.x * weight
+                self.absolute_pose[1] += msg_particle_cloud.particles[i].pose.position.y * weight
+                self.absolute_pose[2] += Rotation.from_quat([msg_particle_cloud.particles[i].pose.orientation.x,msg_particle_cloud.particles[i].pose.orientation.y,msg_particle_cloud.particles[i].pose.orientation.z,msg_particle_cloud.particles[i].pose.orientation.w]).as_euler('xyz')[2] * weight
+
+            # Publish Path For RVIZ Visualization
             path_pose = PoseStamped()
-            path_pose.pose.position.x = weighted_likelihood_particle[0]
-            path_pose.pose.position.y = weighted_likelihood_particle[1]
-            path_pose.pose.position.x = self.z0
+            path_pose.pose.position.x = self.absolute_pose[0]
+            path_pose.pose.position.y = self.absolute_pose[1]
+            path_pose.pose.position.z = self.z0
             self.path_list.append(path_pose)
             self.path_msg.poses = self.path_list
-
             self.path_msg.header.stamp = self.get_clock().now().to_msg()
             self.path_pub.publish(self.path_msg)
 
-
-            # # print(f'Weights: \n{weights}')
-            # # print(f'Probabilities: \n{probabilities}')
-            # estimated_pose = self.point_to_map(max_likelihood_particle.reshape(2,1))
-            # estimated_orientation = self.particles[highest_prob_index][2]
-            # plt.arrow(estimated_pose[0][0], estimated_pose[1][0], 0.5 * np.cos(estimated_orientation), 0.5 * np.sin(estimated_orientation), head_width=3, head_length=3, fc='black', ec='black')  # Plot orientation arrow
-
-            # print(f'Highest Probability Pose: {estimated_pose} - Probability: {probabilities[highest_prob_index]} - Weight: {weights[highest_prob_index]}')
-            # print(f'len weights: {len(weights)}')
-            # print(f'self.point_to_map(self.particles[:,:2].T): {self.point_to_map(self.particles[:,:2].T).shape}')
-
-
-            weighted_pose = self.point_to_map(weighted_likelihood_particle.reshape(2,1))
-            print(f'Weighted Pose Grid {weighted_pose.shape}: {weighted_pose}')
-            weighted_orientation = np.average(self.particles[:,2], axis=0,weights=self.particles[:,3])
-            print(f'Weighted Orientation {weighted_orientation.shape}: {weighted_orientation}')
-
-            # print(f'Weighted Pose [m]: {np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])}')
-            # print(f'Weighted Pose Grid: {weighted_pose}')
-            #plt.arrow(weighted_pose[0], weighted_pose[1], 0.5 * np.cos(weighted_orientation), 0.5 * np.sin(weighted_orientation), head_width=3, head_length=3, fc='yellow', ec='yellow')  # Plot orientation arrow
-
-            # feature_indices = [round(np.rad2deg(ang)) for ang in np.linspace(0, np.pi, self.n_features)][:-1]
-            # feature_pc = pc_grid[feature_indices]
-            # print(f'Feature Indices: {feature_indices}')
-
-            # print(f'pc features {feature_pc.shape}: \n{feature_pc}')
-
-            # print(f'Features {features.shape}: \n{features}')
-            # Create Odometry message
-            # odom = Odometry()
-            # odom.header.stamp = self.get_clock().now().to_msg()
-            # odom.header.frame_id = 'amcl_baselink'
-            # odom.child_frame_id = '???'  # Replace with the correct child frame id
-            # odom.pose.pose.position.x = float(weighted_likelihood_particle[0])
-            # odom.pose.pose.position.y = float(weighted_likelihood_particle[1])
-            # odom.pose.pose.position.z = float(self.z0)
-            # odom.pose.pose.orientation.z = float(weighted_orientation)
-            # odom.twist.twist = self.cmd_vel_msg
-            # # Publish the estimated pose
-            # self.pose_pub.publish(odom)
-                    # Create a transform
+            # Publish Transform Frame
+            
             self.static_transform = TransformStamped()
             self.static_transform.header.stamp = self.get_clock().now().to_msg()
             self.static_transform.header.frame_id = 'odom'
             self.static_transform.child_frame_id = 'amcl_basescan'
-            self.static_transform.transform.translation.x = float(weighted_likelihood_particle[0])
-            self.static_transform.transform.translation.y = float(weighted_likelihood_particle[1])
+            self.static_transform.transform.translation.x = float(self.absolute_pose[0])
+            self.static_transform.transform.translation.y = float(self.absolute_pose[1])
             self.static_transform.transform.translation.z = float(self.z0)
-            self.static_transform.transform.rotation.x = float(self.rx)
-            self.static_transform.transform.rotation.y = float(self.ry)
-            self.static_transform.transform.rotation.z = float(weighted_orientation)
-            self.static_transform.transform.rotation.w = float(self.rw)
+            R = Rotation.from_euler('z', self.absolute_pose[2]).as_quat()
+            self.static_transform.transform.rotation.x = float(R[0])
+            self.static_transform.transform.rotation.y = float(R[1])
+            self.static_transform.transform.rotation.z = float(R[2])
+            self.static_transform.transform.rotation.w = float(R[3])
 
             self.tf_broadcaster.sendTransform(self.static_transform)
 
-        #plt.show()
 
         return pc
     
@@ -254,10 +219,6 @@ class ParticleFilter(Node):
         Returns:
             numpy.ndarray: The grid coordinates as a 1D array of shape (2,).
         """
-
-
-
-        #print(f'PC In Conversion to grid {pc.shape}: {pc}')
         pc_grid = np.array([self.map.info.width/2,self.map.info.height/2]).reshape(2,1) + pc/self.map.info.resolution
         return pc_grid
     
@@ -420,11 +381,26 @@ class ParticleFilter(Node):
 
 
     def motion_model_update(self,cmd_vel_msg):
+        def Pi(pts_inhomogenous):
+            # Converts homogeneous points to inhomogeneous coordinates.
+            assert pts_inhomogenous.shape[0] == 3 or pts_inhomogenous.shape[0] == 4, "Input points must be 3xN or 4xN"
+            tmp = pts_inhomogenous[:-1] / pts_inhomogenous[-1]
+            return tmp
+
+        def PiInv(pts_homogenous):
+            # Converts inhomogeneous points to homogeneous coordinates.
+            assert pts_homogenous.shape[0] == 2 or pts_homogenous.shape[0] == 3, "Input points must be 2xN or 3xN"
+            tmp = np.vstack((pts_homogenous, np.ones(pts_homogenous.shape)[0]))
+            return tmp
 
         delta_t = (self.get_clock().now().nanoseconds / 1e9 - self.t0)
         delta_x = (cmd_vel_msg.linear.x * np.cos(self.theta0) * delta_t)
         delta_y = (cmd_vel_msg.linear.x * np.sin(self.theta0) * delta_t)
         delta_theta = cmd_vel_msg.angular.z * delta_t
+
+        R = Rotation.from_euler('z', delta_theta).as_matrix()
+
+        self.particles[:,:2] = Pi(R @ PiInv(self.particles[:,:2].T)).T
 
         self.particles[:,0] +=  delta_x
         self.particles[:,1] +=  delta_y
@@ -432,24 +408,10 @@ class ParticleFilter(Node):
 
         self.t0 = self.get_clock().now().nanoseconds / 1e9
 
-        weighted_pose = np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])
-        self.x0 = weighted_pose[0]
-        self.y0 = weighted_pose[1]
-        self.theta0 = np.average(self.particles[:,2], weights=self.particles[:,3])
-        print(f'--------------------------------- CMD VEL ------------------------------')
-        print(f'Delta X: {delta_x}, Delta Y: {delta_y}, Delta Theta: {delta_theta}')
-
-        #self.measurement_model_update()
-
-    def measurement_model_update(self,pc):
-        if self.map is not None:
-            img = np.array(self.map.data).reshape(self.map.info.height,self.map.info.width)
-            plt.imshow(img)
-            plt.show()
-
-            for i in range(self.n_particles):
-                pass
-            
+        if self.absolute_pose is not None:
+            self.x0 = self.absolute_pose[0]
+            self.y0 = self.absolute_pose[1]
+            self.theta0 = self.absolute_pose[2]
         
     def wait_for_transform(self, target_frame, source_frame):
         """
