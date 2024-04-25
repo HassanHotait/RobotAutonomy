@@ -35,11 +35,20 @@ class ParticleFilter(Node):
         self.max_range = None
         self.particles = np.zeros((self.n_particles, 4)) 
         self.map = None#np.array(imageio.imread('/home/ubuntu/Desktop/RobotAutonomy/src/my_turtlebot/maps/map.pgm'))
+
         self.path_msg = Path()
         self.path_msg.header.frame_id = 'odom'
+        self.gt_path_msg = Path()
+        self.gt_path_msg.header.frame_id = 'odom'
+        self.motion_model_path_msg = Path()
+        self.motion_model_path_msg.header.frame_id = 'odom'
 
         self.path_list = []
         self.absolute_pose = None
+        self.motion_model_pose = None
+        self.gt_pose = None
+        self.gt_path_list = []
+        self.motion_model_path_list = []
 
         transform_scanner = self.wait_for_transform('odom', 'base_scan')
 
@@ -60,13 +69,16 @@ class ParticleFilter(Node):
         self.init_particles()
 
         # Subscribe to the '/particle_cloud' topic with the specified QoS profile
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.process_scan, 10)
+        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.process_scan, 100)
         map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
         self.map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, map_qos)
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 10)
-        self.particle_pub = self.create_publisher(ParticleCloud, '/particle_cloud', 10)
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 100)
+        self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 100)
+        self.particle_pub = self.create_publisher(ParticleCloud, '/particle_cloud', 100)
         self.pose_pub = self.create_publisher(Odometry, '/amcl_pose', 10)
         self.path_pub = self.create_publisher(Path, '/path', 10)
+        self.gt_path_pub = self.create_publisher(Path, '/gt_path', 10)
+        self.motion_model_path_pub = self.create_publisher(Path, '/motion_model_path', 10)
 
     def init_particles(self):
         """
@@ -418,19 +430,51 @@ class ParticleFilter(Node):
         delta_theta = cmd_vel_msg.angular.z * delta_t
 
         R = Rotation.from_euler('z', delta_theta).as_matrix()
-
-        #self.particles[:,:2] = Pi(R @ PiInv(self.particles[:,:2].T)).T
+        self.particles[:,:2] = Pi(R @ PiInv(self.particles[:,:2].T)).T
 
         self.particles[:,0] +=  delta_x
         self.particles[:,1] +=  delta_y
         self.particles[:,2] +=  delta_theta
 
+        
         self.t0 = self.get_clock().now().nanoseconds / 1e9
 
         if self.absolute_pose is not None:
-            self.x0 = self.absolute_pose[0]
-            self.y0 = self.absolute_pose[1]
-            self.theta0 = self.absolute_pose[2]
+            self.x0 += delta_x
+            self.y0 += delta_y
+            self.theta0 += delta_theta
+
+            # Publish Path For RVIZ Visualization
+            motion_model_path_pose = PoseStamped()
+            motion_model_path_pose.pose.position.x = self.x0
+            motion_model_path_pose.pose.position.y = self.y0
+            motion_model_path_pose.pose.position.z = self.z0
+            self.motion_model_path_list.append(motion_model_path_pose)
+            self.motion_model_path_msg.poses = self.motion_model_path_list
+            self.motion_model_path_msg.header.stamp = self.get_clock().now().to_msg()
+            self.motion_model_path_pub.publish(self.motion_model_path_msg)
+
+            print(f'Publishing Motion Model Path')
+
+    def odom_callback(self, odom_msg):
+        if odom_msg.header.frame_id == "odom" and odom_msg.child_frame_id == "base_footprint":
+
+            pose_transform = self.wait_for_transform('odom', 'base_scan')
+
+
+
+            # Publish Path For RVIZ Visualization
+            gt_path_pose = PoseStamped()
+            gt_path_pose.pose.position.x = pose_transform.transform.translation.x
+            gt_path_pose.pose.position.y = pose_transform.transform.translation.y
+            gt_path_pose.pose.position.z = pose_transform.transform.translation.z
+            self.gt_path_list.append(gt_path_pose)
+            self.gt_path_msg.poses = self.gt_path_list
+            self.gt_path_msg.header.stamp = self.get_clock().now().to_msg()
+            self.gt_path_pub.publish(self.gt_path_msg)
+
+
+
         
     def wait_for_transform(self, target_frame, source_frame):
         """

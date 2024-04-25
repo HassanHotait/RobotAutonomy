@@ -115,7 +115,7 @@ def generate_launch_description():
     declare_rviz_config_file_cmd = DeclareLaunchArgument(
         'rviz_config_file',
         default_value=os.path.join(
-            my_turtlebot_dir, 'rviz', 'rviz_launch.rviz'),
+            my_turtlebot_dir, 'rviz', 'amcl_rviz_launch.rviz'),
         description='Full path to the RVIZ config file to use')
 
 
