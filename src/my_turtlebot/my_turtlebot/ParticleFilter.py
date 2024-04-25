@@ -1,5 +1,6 @@
 
 from email.mime import image
+from operator import gt
 from pyexpat import features
 from turtle import position
 
@@ -29,7 +30,7 @@ class ParticleFilter(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
-        self.n_particles = 50
+        self.n_particles = 100
         self.n_features = 2
         self.max_range = None
         self.particles = np.zeros((self.n_particles, 4)) 
@@ -139,7 +140,9 @@ class ParticleFilter(Node):
                 feature_error = []
                 for key, value in feature.items():
 
-                    error = np.linalg.norm(np.array(value).reshape(2,1) - np.array([pc_grid[key][0], pc_grid[key][1]]))
+                    gt_range = scan_msg.ranges[key] if scan_msg.ranges[key] < scan_msg.range_max else scan_msg.range_max
+                    value = value if value < scan_msg.range_max else scan_msg.range_max
+                    error = np.abs(value - gt_range)
                     feature_error.append(error)
                 feature_error = np.mean(feature_error)
                 weights.append(feature_error)
@@ -241,8 +244,12 @@ class ParticleFilter(Node):
                         if self.map.data[int(x + y * self.map.info.width)] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append(([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)]))
-                            alpha_features.append(([x, y]))
-                            plt.scatter(x, y, c='blue')
+                            # alpha_features.append(([x, y]))
+                            # plt.scatter(x, y, c='blue')
+                            if np.dot([x - particle_pose[0], y - particle_pose[1]], [np.cos(alpha), np.sin(alpha)]) > 0:
+                                features[round(np.rad2deg(alpha))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
+                            else:
+                                features[round(np.rad2deg(alpha + np.pi))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
                             break
                     # if x == self.map.info.width - 1:
                     #     features.append([max_range*np.cos(alpha), max_range*np.sin(alpha)])
@@ -252,8 +259,12 @@ class ParticleFilter(Node):
                         if self.map.data[int(x + y * self.map.info.width)] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
-                            alpha_features.append(([x, y]))
-                            plt.scatter(x, y, c='blue')
+                            # alpha_features.append(([x, y]))
+                            # plt.scatter(x, y, c='blue')
+                            if np.dot([x - particle_pose[0], y - particle_pose[1]], [np.cos(alpha), np.sin(alpha)]) > 0:
+                                features[round(np.rad2deg(alpha))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
+                            else:
+                                features[round(np.rad2deg(alpha + np.pi))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
                             break
                     # if x == 0 + 1:
                     #     features.append([max_range*np.cos(alpha), max_range*np.sin(alpha)])
@@ -271,8 +282,12 @@ class ParticleFilter(Node):
                         if self.map.data[int(x + round(y * self.map.info.width))] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
-                            alpha_features.append(([x, y]))
-                            plt.scatter(x, y, c='blue')
+                            # alpha_features.append(([x, y]))
+                            # plt.scatter(x, y, c='blue')
+                            if np.dot([x - particle_pose[0], y - particle_pose[1]], [np.cos(alpha), np.sin(alpha)]) > 0:
+                                features[round(np.rad2deg(alpha))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
+                            else:
+                                features[round(np.rad2deg(alpha + np.pi))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
                             break
                             
                     # if y == self.map.info.height - 1:
@@ -283,8 +298,12 @@ class ParticleFilter(Node):
                         if self.map.data[int(x + round(y * self.map.info.width))] == 100:
                             #print(f'Intersection at: {x, y}')
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
-                            alpha_features.append(([x, y]))
+                            #alpha_features.append(([x, y]))
                             #plt.scatter(x, y, c='blue')
+                            if np.dot([x - particle_pose[0], y - particle_pose[1]], [np.cos(alpha), np.sin(alpha)]) > 0:
+                                features[round(np.rad2deg(alpha))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
+                            else:
+                                features[round(np.rad2deg(alpha + np.pi))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
                             break
                 # features.append([self.max_range, self.max_range])
                     # if y == 0 + 1:
@@ -303,9 +322,9 @@ class ParticleFilter(Node):
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
                             alpha_features.append(([x, y]))
                             if np.dot([x - particle_pose[0], y - particle_pose[1]], [np.cos(alpha), np.sin(alpha)]) > 0:
-                                features[round(np.rad2deg(alpha))] = [x, y]
+                                features[round(np.rad2deg(alpha))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
                             else:
-                                features[round(np.rad2deg(alpha + np.pi))] = [x, y]
+                                features[round(np.rad2deg(alpha + np.pi))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
                             #plt.scatter(x, y, c='blue')
                             break   
                     # if x == self.map.info.width - 1
@@ -318,9 +337,9 @@ class ParticleFilter(Node):
                             #features.append([alpha, np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)])
                             alpha_features.append(([x, y]))
                             if np.dot([x - particle_pose[0], y - particle_pose[1]], [np.cos(alpha), np.sin(alpha)]) > 0:
-                                features[round(np.rad2deg(alpha))] = [x, y]
+                                features[round(np.rad2deg(alpha))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
                             else:
-                                features[round(np.rad2deg(alpha + np.pi))] = [x, y]
+                                features[round(np.rad2deg(alpha + np.pi))] = np.sqrt((x - particle_pose[0])**2 + (y - particle_pose[1])**2)
                             plt.scatter(x, y, c='blue')
                             break
 
@@ -400,7 +419,7 @@ class ParticleFilter(Node):
 
         R = Rotation.from_euler('z', delta_theta).as_matrix()
 
-        self.particles[:,:2] = Pi(R @ PiInv(self.particles[:,:2].T)).T
+        #self.particles[:,:2] = Pi(R @ PiInv(self.particles[:,:2].T)).T
 
         self.particles[:,0] +=  delta_x
         self.particles[:,1] +=  delta_y
