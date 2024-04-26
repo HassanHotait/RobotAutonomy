@@ -57,6 +57,13 @@ class ParticleFilter(Node):
         self.y0 = transform_scanner.transform.translation.y
         self.z0 = transform_scanner.transform.translation.z
 
+        # # Initialize Motion Model Variables
+        self.x_mm = transform_scanner.transform.translation.x
+        self.y_mm = transform_scanner.transform.translation.y
+        self.z_mm = transform_scanner.transform.translation.z
+        #self.theta_mm = np.arctan2(Rotation.from_quat([transform_scanner.transform.rotation.x,transform_scanner.transform.rotation.y,transform_scanner.transform.rotation.z,transform_scanner.transform.rotation.w]).as_matrix()[1, 0], Rotation.from_quat([transform_scanner.transform.rotation.x,transform_scanner.transform.rotation.y,transform_scanner.transform.rotation.z,transform_scanner.transform.rotation.w]).as_matrix()[0, 0])
+
+
         print(f'Init Pose: {self.x0, self.y0}')
 
         R = Rotation.from_quat([transform_scanner.transform.rotation.x,transform_scanner.transform.rotation.y,transform_scanner.transform.rotation.z,transform_scanner.transform.rotation.w]).as_matrix()
@@ -440,14 +447,19 @@ class ParticleFilter(Node):
         self.t0 = self.get_clock().now().nanoseconds / 1e9
 
         if self.absolute_pose is not None:
-            self.x0 += delta_x
-            self.y0 += delta_y
-            self.theta0 += delta_theta
+            self.x0 = self.absolute_pose[0]
+            self.y0 = self.absolute_pose[1]
+            self.theta0 = self.absolute_pose[2]
+
+            # Motion Model
+            self.x_mm += delta_x
+            self.y_mm += delta_y
+            # self. += delta_theta
 
             # Publish Path For RVIZ Visualization
             motion_model_path_pose = PoseStamped()
-            motion_model_path_pose.pose.position.x = self.x0
-            motion_model_path_pose.pose.position.y = self.y0
+            motion_model_path_pose.pose.position.x = self.x_mm
+            motion_model_path_pose.pose.position.y = self.y_mm
             motion_model_path_pose.pose.position.z = self.z0
             self.motion_model_path_list.append(motion_model_path_pose)
             self.motion_model_path_msg.poses = self.motion_model_path_list
