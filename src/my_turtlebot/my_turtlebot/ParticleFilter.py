@@ -56,6 +56,7 @@ class ParticleFilter(Node):
         self.x0 = transform_scanner.transform.translation.x
         self.y0 = transform_scanner.transform.translation.y
         self.z0 = transform_scanner.transform.translation.z
+        self.theta0 = np.arctan2(Rotation.from_quat([transform_scanner.transform.rotation.x,transform_scanner.transform.rotation.y,transform_scanner.transform.rotation.z,transform_scanner.transform.rotation.w]).as_matrix()[1, 0], Rotation.from_quat([transform_scanner.transform.rotation.x,transform_scanner.transform.rotation.y,transform_scanner.transform.rotation.z,transform_scanner.transform.rotation.w]).as_matrix()[0, 0])
 
         # # Initialize Motion Model Variables
         self.x_mm = transform_scanner.transform.translation.x
@@ -76,12 +77,12 @@ class ParticleFilter(Node):
         self.init_particles()
 
         # Subscribe to the '/particle_cloud' topic with the specified QoS profile
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.process_scan, 100)
+        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.process_scan, 10)
         map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
         self.map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, map_qos)
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 100)
-        self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 100)
-        self.particle_pub = self.create_publisher(ParticleCloud, '/particle_cloud', 100)
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 10)
+        self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
+        self.particle_pub = self.create_publisher(ParticleCloud, '/particle_cloud', 10)
         self.pose_pub = self.create_publisher(Odometry, '/amcl_pose', 10)
         self.path_pub = self.create_publisher(Path, '/path', 10)
         self.gt_path_pub = self.create_publisher(Path, '/gt_path', 10)
@@ -200,6 +201,10 @@ class ParticleFilter(Node):
                 self.absolute_pose[0] += msg_particle_cloud.particles[i].pose.position.x * weight
                 self.absolute_pose[1] += msg_particle_cloud.particles[i].pose.position.y * weight
                 self.absolute_pose[2] += Rotation.from_quat([msg_particle_cloud.particles[i].pose.orientation.x,msg_particle_cloud.particles[i].pose.orientation.y,msg_particle_cloud.particles[i].pose.orientation.z,msg_particle_cloud.particles[i].pose.orientation.w]).as_euler('xyz')[2] * weight
+
+            self.x0 = self.absolute_pose[0]
+            self.y0 = self.absolute_pose[1]
+            self.theta0 = self.absolute_pose[2]
 
             # Publish Path For RVIZ Visualization
             path_pose = PoseStamped()
@@ -435,6 +440,7 @@ class ParticleFilter(Node):
         delta_x = (cmd_vel_msg.linear.x * np.cos(self.theta0) * delta_t)
         delta_y = (cmd_vel_msg.linear.x * np.sin(self.theta0) * delta_t)
         delta_theta = cmd_vel_msg.angular.z * delta_t
+        self.t0 = self.get_clock().now().nanoseconds / 1e9
 
         R = Rotation.from_euler('z', delta_theta).as_matrix()
         self.particles[:,:2] = Pi(R @ PiInv(self.particles[:,:2].T)).T
@@ -444,12 +450,10 @@ class ParticleFilter(Node):
         self.particles[:,2] +=  delta_theta
 
         
-        self.t0 = self.get_clock().now().nanoseconds / 1e9
+        
 
         if self.absolute_pose is not None:
-            self.x0 = self.absolute_pose[0]
-            self.y0 = self.absolute_pose[1]
-            self.theta0 = self.absolute_pose[2]
+
 
             # Motion Model
             self.x_mm += delta_x

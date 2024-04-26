@@ -7,6 +7,7 @@ from nav_msgs.msg import Odometry
 import tf2_ros
 import numpy as np
 from scipy.spatial.distance import cdist
+from scipy.spatial.transform import Rotation
 
 class LocalizationNode(Node):
     """
@@ -47,7 +48,7 @@ class LocalizationNode(Node):
         self.x0 = transform_scanner.transform.translation.x
         self.y0 = transform_scanner.transform.translation.y
         self.z0 = transform_scanner.transform.translation.z
-        self.theta0 = transform_scanner.transform.rotation.z
+        self.theta0 = Rotation.from_quat([transform_scanner.transform.rotation.x,transform_scanner.transform.rotation.y,transform_scanner.transform.rotation.z,transform_scanner.transform.rotation.w]).as_euler('xyz')[2]
         self.t0 = self.get_clock().now().nanoseconds / 1e9
         self.scan_msg_prev = None
         self.lidar_odom = None
@@ -209,9 +210,9 @@ class LocalizationNode(Node):
             return tmp
         
         delta_t = (self.get_clock().now().nanoseconds / 1e9 - self.t0)
-        delta_x = -(self.linear_velocity_mps * np.cos(self.theta0) * delta_t)
-        delta_y = -(self.linear_velocity_mps * np.sin(self.theta0) * delta_t)
-        delta_theta = - self.angular_velocity_radps * delta_t
+        delta_x = (self.linear_velocity_mps * np.cos(self.theta0) * delta_t)
+        delta_y = (self.linear_velocity_mps * np.sin(self.theta0) * delta_t)
+        delta_theta = self.angular_velocity_radps * delta_t
         T = np.array([
             [np.cos(delta_theta), -np.sin(delta_theta), delta_x],
             [np.sin(delta_theta), np.cos(delta_theta), delta_y],
