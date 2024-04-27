@@ -1,5 +1,5 @@
 
-from email.mime import image
+from email.mime import base, image
 from operator import gt
 from pyexpat import features
 from turtle import position
@@ -31,7 +31,7 @@ class ParticleFilter(Node):
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
         self.n_particles = 100
-        self.n_features = 2
+        self.n_features = 4
         self.max_range = None
         self.particles = np.zeros((self.n_particles, 4)) 
         self.map = None#np.array(imageio.imread('/home/ubuntu/Desktop/RobotAutonomy/src/my_turtlebot/maps/map.pgm'))
@@ -51,6 +51,7 @@ class ParticleFilter(Node):
         self.motion_model_path_list = []
 
         transform_scanner = self.wait_for_transform('odom', 'base_scan')
+        self.base2scan = self.wait_for_transform('base_footprint', 'base_scan')
 
         # # Initialize variables
         self.x0 = transform_scanner.transform.translation.x
@@ -445,31 +446,34 @@ class ParticleFilter(Node):
 
         print(f'Delta X: {delta_x}, Delta Y: {delta_y}, Delta Theta Degrees: {np.rad2deg(delta_theta)}')
         
+        if self.absolute_pose is not None:
 
-        self.particles[:,0] +=  delta_x
-        self.particles[:,1] +=  delta_y
-        self.particles[:,2] +=  delta_theta
+            self.particles[:,0] +=  delta_x
+            self.particles[:,1] +=  delta_y
+            self.particles[:,2] +=  delta_theta
 
-        R = Rotation.from_euler('z', delta_theta).as_matrix()
-        transformed_points = self.particles[:,:2] - np.array([self.x_mm, self.y_mm]).reshape(1,2)
-        self.particles[:,:2] = Pi(R @ PiInv(transformed_points.T)).T + np.array([self.x_mm, self.y_mm]).reshape(1,2)
+            R = Rotation.from_euler('z', delta_theta).as_matrix()
+            transformed_points = self.particles[:,:2] - np.array([self.x_mm, self.y_mm]).reshape(1,2)
+            self.particles[:,:2] = Pi(R @ PiInv(transformed_points.T)).T + np.array([self.x_mm, self.y_mm]).reshape(1,2)
+            # transformed_points = self.particles[:,:2] - np.array(self.absolute_pose[:2]).reshape(1,2)
+            # self.particles[:,:2] = Pi(R @ PiInv(transformed_points.T)).T + np.array(self.absolute_pose[:2]).reshape(1,2)
 
-        # Motion Model
-        self.x_mm += delta_x
-        self.y_mm += delta_y
+            # Motion Model
+            self.x_mm += delta_x
+            self.y_mm += delta_y
 
-        # Publish Path For RVIZ Visualization
-        motion_model_path_pose = PoseStamped()
-        motion_model_path_pose.pose.position.x = self.x_mm
-        motion_model_path_pose.pose.position.y = self.y_mm
-        motion_model_path_pose.pose.position.z = self.z0
-        self.motion_model_path_list.append(motion_model_path_pose)
-        self.motion_model_path_msg.poses = self.motion_model_path_list
-        self.motion_model_path_msg.header.stamp = self.get_clock().now().to_msg()
-        self.motion_model_path_pub.publish(self.motion_model_path_msg)
+            # Publish Path For RVIZ Visualization
+            motion_model_path_pose = PoseStamped()
+            motion_model_path_pose.pose.position.x = self.x_mm
+            motion_model_path_pose.pose.position.y = self.y_mm
+            motion_model_path_pose.pose.position.z = self.z0
+            self.motion_model_path_list.append(motion_model_path_pose)
+            self.motion_model_path_msg.poses = self.motion_model_path_list
+            self.motion_model_path_msg.header.stamp = self.get_clock().now().to_msg()
+            self.motion_model_path_pub.publish(self.motion_model_path_msg)
 
-        print(f'Publishing Motion Model Path')
-        self.t0 = self.get_clock().now().nanoseconds / 1e9
+            print(f'Publishing Motion Model Path')
+            self.t0 = self.get_clock().now().nanoseconds / 1e9
 
         
 
@@ -497,16 +501,13 @@ class ParticleFilter(Node):
 
     def odom_callback(self, odom_msg):
         if odom_msg.header.frame_id == "odom" and odom_msg.child_frame_id == "base_footprint":
-
-            pose_transform = self.wait_for_transform('odom', 'base_scan')
-
-
-
             # Publish Path For RVIZ Visualization
+
+            print(f'Odom Msg: {odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y}')
             gt_path_pose = PoseStamped()
-            gt_path_pose.pose.position.x = pose_transform.transform.translation.x
-            gt_path_pose.pose.position.y = pose_transform.transform.translation.y
-            gt_path_pose.pose.position.z = pose_transform.transform.translation.z
+            gt_path_pose.pose.position.x = odom_msg.pose.pose.position.x + self.base2scan.transform.translation.x
+            gt_path_pose.pose.position.y = odom_msg.pose.pose.position.y + self.base2scan.transform.translation.y
+            gt_path_pose.pose.position.z = odom_msg.pose.pose.position.z + self.base2scan.transform.translation.z
             self.gt_path_list.append(gt_path_pose)
             self.gt_path_msg.poses = self.gt_path_list
             self.gt_path_msg.header.stamp = self.get_clock().now().to_msg()
