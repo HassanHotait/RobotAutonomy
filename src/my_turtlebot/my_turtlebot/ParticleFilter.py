@@ -74,6 +74,7 @@ class ParticleFilter(Node):
         self.rw = transform_scanner.transform.rotation.w
         self.t0 = self.get_clock().now().nanoseconds / 1e9
 
+        print(f'Initialized Particles')
         self.init_particles()
 
         # Subscribe to the '/particle_cloud' topic with the specified QoS profile
@@ -440,37 +441,59 @@ class ParticleFilter(Node):
         delta_x = (cmd_vel_msg.linear.x * np.cos(self.theta0) * delta_t)
         delta_y = (cmd_vel_msg.linear.x * np.sin(self.theta0) * delta_t)
         delta_theta = cmd_vel_msg.angular.z * delta_t
-        self.t0 = self.get_clock().now().nanoseconds / 1e9
+        
 
-        R = Rotation.from_euler('z', delta_theta).as_matrix()
-        self.particles[:,:2] = Pi(R @ PiInv(self.particles[:,:2].T)).T
+        print(f'Delta X: {delta_x}, Delta Y: {delta_y}, Delta Theta Degrees: {np.rad2deg(delta_theta)}')
+        
 
         self.particles[:,0] +=  delta_x
         self.particles[:,1] +=  delta_y
         self.particles[:,2] +=  delta_theta
 
+        R = Rotation.from_euler('z', delta_theta).as_matrix()
+        transformed_points = self.particles[:,:2] - np.array([self.x_mm, self.y_mm]).reshape(1,2)
+        self.particles[:,:2] = Pi(R @ PiInv(transformed_points.T)).T + np.array([self.x_mm, self.y_mm]).reshape(1,2)
+
+        # Motion Model
+        self.x_mm += delta_x
+        self.y_mm += delta_y
+
+        # Publish Path For RVIZ Visualization
+        motion_model_path_pose = PoseStamped()
+        motion_model_path_pose.pose.position.x = self.x_mm
+        motion_model_path_pose.pose.position.y = self.y_mm
+        motion_model_path_pose.pose.position.z = self.z0
+        self.motion_model_path_list.append(motion_model_path_pose)
+        self.motion_model_path_msg.poses = self.motion_model_path_list
+        self.motion_model_path_msg.header.stamp = self.get_clock().now().to_msg()
+        self.motion_model_path_pub.publish(self.motion_model_path_msg)
+
+        print(f'Publishing Motion Model Path')
+        self.t0 = self.get_clock().now().nanoseconds / 1e9
+
         
+
+        # if self.absolute_pose is not None:
+
+
+            
+
+        #     # transformed_points = self.particles[:,:2] - np.array([self.x_mm, self.y_mm]).reshape(1,2)
+        #     # self.particles[:,:2] = Pi(R @ PiInv(transformed_points.T)).T + np.array([self.x_mm, self.y_mm]).reshape(1,2)
+        #     # transformed_points = self.particles[:,:2] - np.array(self.absolute_pose[:2]).reshape(1,2)
+        #     # self.particles[:,:2] = Pi(R @ PiInv(transformed_points.T)).T + np.array(self.absolute_pose[:2]).reshape(1,2)
+
+
+        #     # rotated_pts = R @ np.array([self.x_mm, self.y_mm, 1]).reshape(3,1)
+
+        #     # print(f'Rotated Points {rotated_pts.shape}: {rotated_pts}')
+        #     # self.x_mm = rotated_pts[0].item()
+        #     # self.y_mm = rotated_pts[1].item()
+        #     # self. += delta_theta
+
+
+
         
-
-        if self.absolute_pose is not None:
-
-
-            # Motion Model
-            self.x_mm += delta_x
-            self.y_mm += delta_y
-            # self. += delta_theta
-
-            # Publish Path For RVIZ Visualization
-            motion_model_path_pose = PoseStamped()
-            motion_model_path_pose.pose.position.x = self.x_mm
-            motion_model_path_pose.pose.position.y = self.y_mm
-            motion_model_path_pose.pose.position.z = self.z0
-            self.motion_model_path_list.append(motion_model_path_pose)
-            self.motion_model_path_msg.poses = self.motion_model_path_list
-            self.motion_model_path_msg.header.stamp = self.get_clock().now().to_msg()
-            self.motion_model_path_pub.publish(self.motion_model_path_msg)
-
-            print(f'Publishing Motion Model Path')
 
     def odom_callback(self, odom_msg):
         if odom_msg.header.frame_id == "odom" and odom_msg.child_frame_id == "base_footprint":

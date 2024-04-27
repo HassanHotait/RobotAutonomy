@@ -26,7 +26,7 @@ class MappingNode(Node):
         self.scan_msg_prev = None
         self.linear_velocity_mps = 0.0
         self.angular_velocity_radps = 0.0
-        self.resolution = 0.05
+        self.resolution = 0.01
         self.width_m = 30
         self.height_m = 10
 
@@ -165,8 +165,8 @@ class MappingNode(Node):
         # print(f'Point Cloud {pc.shape}: \n {pc}')
         for pt in pc.T:
             # Rotate (x, y) by transform.transform.rotation.z
-            x = int((map_msg.info.width / 2) + (pt[0] / map_msg.info.resolution) + (transform.transform.translation.x / map_msg.info.resolution))
-            y = int((map_msg.info.height / 2) + (pt[1] / map_msg.info.resolution) + (transform.transform.translation.y / map_msg.info.resolution))
+            x = int(round((map_msg.info.width / 2) + (pt[0] / map_msg.info.resolution) + (transform.transform.translation.x / map_msg.info.resolution)))
+            y = int(round((map_msg.info.height / 2) + (pt[1] / map_msg.info.resolution) + (transform.transform.translation.y / map_msg.info.resolution)))
 
             if x >= 0 and x < map_msg.info.width and y >= 0 and y < map_msg.info.height:
                 data[y, x] = 100
