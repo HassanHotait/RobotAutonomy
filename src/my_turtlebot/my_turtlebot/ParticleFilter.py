@@ -30,8 +30,8 @@ class ParticleFilter(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
-        self.n_particles = 100
-        self.n_features = 4
+        self.n_particles = 50
+        self.n_features = 2
         self.max_range = None
         self.particles = np.zeros((self.n_particles, 4)) 
         self.map = None#np.array(imageio.imread('/home/ubuntu/Desktop/RobotAutonomy/src/my_turtlebot/maps/map.pgm'))
@@ -52,6 +52,10 @@ class ParticleFilter(Node):
 
         transform_scanner = self.wait_for_transform('odom', 'base_scan')
         self.base2scan = self.wait_for_transform('base_footprint', 'base_scan')
+
+        self.gt_array = np.empty((2,1))
+        self.mm_array = np.empty((2,1))
+        self.pf_array = np.empty((2,1))
 
         # # Initialize variables
         self.x0 = transform_scanner.transform.translation.x
@@ -79,10 +83,10 @@ class ParticleFilter(Node):
         self.init_particles()
 
         # Subscribe to the '/particle_cloud' topic with the specified QoS profile
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.process_scan, 10)
+        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.process_scan, 50)
         map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
         self.map_sub = self.create_subscription(OccupancyGrid, '/map', self.map_callback, map_qos)
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 10)
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.motion_model_update, 50)
         self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.particle_pub = self.create_publisher(ParticleCloud, '/particle_cloud', 10)
         self.pose_pub = self.create_publisher(Odometry, '/amcl_pose', 10)
@@ -97,7 +101,7 @@ class ParticleFilter(Node):
         for i in range(self.n_particles):
             x = self.x0 + np.random.uniform(-0.5, 0.5)
             y = self.y0 + np.random.uniform(-0.5, 0.5)
-            theta = self.theta0 + np.random.uniform(-np.pi/6, np.pi/6)
+            theta = self.theta0 + np.random.uniform(-np.pi/4, np.pi/4)
             weight = 1.0 / self.n_particles
             self.particles[i] = np.array([x, y, theta, weight]).reshape(1, 4)
     def map_callback(self, map_msg):
@@ -217,6 +221,10 @@ class ParticleFilter(Node):
             self.path_msg.poses = self.path_list
             self.path_msg.header.stamp = self.get_clock().now().to_msg()
             self.path_pub.publish(self.path_msg)
+
+            #self.pf_array = np.vstack((self.pf_array, np.array([self.absolute_pose[0], self.absolute_pose[1]])))
+            self.pf_array = np.hstack((self.pf_array, np.array([self.x0, self.y0]).reshape(2,1)))
+            np.save('pf.npy', self.pf_array)
 
             # Publish Transform Frame
             
@@ -462,6 +470,7 @@ class ParticleFilter(Node):
             self.x_mm += delta_x
             self.y_mm += delta_y
 
+
             # Publish Path For RVIZ Visualization
             motion_model_path_pose = PoseStamped()
             motion_model_path_pose.pose.position.x = self.x_mm
@@ -471,6 +480,9 @@ class ParticleFilter(Node):
             self.motion_model_path_msg.poses = self.motion_model_path_list
             self.motion_model_path_msg.header.stamp = self.get_clock().now().to_msg()
             self.motion_model_path_pub.publish(self.motion_model_path_msg)
+
+            self.mm_array = np.hstack((self.mm_array, np.array([self.x_mm, self.y_mm]).reshape(2,1)))
+            np.save('mm.npy', self.mm_array)
 
             print(f'Publishing Motion Model Path')
             self.t0 = self.get_clock().now().nanoseconds / 1e9
@@ -512,6 +524,11 @@ class ParticleFilter(Node):
             self.gt_path_msg.poses = self.gt_path_list
             self.gt_path_msg.header.stamp = self.get_clock().now().to_msg()
             self.gt_path_pub.publish(self.gt_path_msg)
+
+            self.gt_array = np.hstack((self.gt_array, np.array([odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y]).reshape(2,1)))
+            np.save('gt.npy', self.gt_array)
+
+
 
 
 

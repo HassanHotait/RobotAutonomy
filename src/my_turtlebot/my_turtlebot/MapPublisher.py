@@ -26,7 +26,7 @@ class MappingNode(Node):
         self.scan_msg_prev = None
         self.linear_velocity_mps = 0.0
         self.angular_velocity_radps = 0.0
-        self.resolution = 0.01
+        self.resolution = 0.05
         self.width_m = 30
         self.height_m = 10
 
