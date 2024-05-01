@@ -194,13 +194,6 @@ class ParticleFilter(Node):
                 msg_particle_cloud.particles.append(p)
             self.particle_pub.publish(msg_particle_cloud)
 
-
-            # weighted_likelihood_particle = np.average(self.particles[:,:2], axis=0, weights=self.particles[:,3])
-            # weighted_pose = self.point_to_map(weighted_likelihood_particle.reshape(2,1))
-            # weighted_orientation = np.average(self.particles[:,2], axis=0,weights=self.particles[:,3])
-            # print(f'Weighted Likelihood Particle: {weighted_likelihood_particle}')
-            # print(f'Weighted Pose Grid {weighted_pose.shape}: {weighted_pose}')
-            # print(f'Weighted Orientation {weighted_orientation.shape}: {weighted_orientation}')
             self.absolute_pose =  [0, 0, 0]
             for i in range(len(msg_particle_cloud.particles)):
                 weight = msg_particle_cloud.particles[i].weight
@@ -488,29 +481,6 @@ class ParticleFilter(Node):
             self.t0 = self.get_clock().now().nanoseconds / 1e9
 
         
-
-        # if self.absolute_pose is not None:
-
-
-            
-
-        #     # transformed_points = self.particles[:,:2] - np.array([self.x_mm, self.y_mm]).reshape(1,2)
-        #     # self.particles[:,:2] = Pi(R @ PiInv(transformed_points.T)).T + np.array([self.x_mm, self.y_mm]).reshape(1,2)
-        #     # transformed_points = self.particles[:,:2] - np.array(self.absolute_pose[:2]).reshape(1,2)
-        #     # self.particles[:,:2] = Pi(R @ PiInv(transformed_points.T)).T + np.array(self.absolute_pose[:2]).reshape(1,2)
-
-
-        #     # rotated_pts = R @ np.array([self.x_mm, self.y_mm, 1]).reshape(3,1)
-
-        #     # print(f'Rotated Points {rotated_pts.shape}: {rotated_pts}')
-        #     # self.x_mm = rotated_pts[0].item()
-        #     # self.y_mm = rotated_pts[1].item()
-        #     # self. += delta_theta
-
-
-
-        
-
     def odom_callback(self, odom_msg):
         if odom_msg.header.frame_id == "odom" and odom_msg.child_frame_id == "base_footprint":
             # Publish Path For RVIZ Visualization
@@ -527,10 +497,6 @@ class ParticleFilter(Node):
 
             self.gt_array = np.hstack((self.gt_array, np.array([odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y]).reshape(2,1)))
             np.save('gt.npy', self.gt_array)
-
-
-
-
 
         
     def wait_for_transform(self, target_frame, source_frame):

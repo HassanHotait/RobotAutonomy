@@ -68,13 +68,6 @@ class MappingNode(Node):
         map_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, history = QoSHistoryPolicy.KEEP_LAST)
         self.map_pub = self.create_publisher(OccupancyGrid, '/my_map', map_qos)
 
-        # transform_scanner = self.wait_for_transform('odom', 'base_scan')
-        # transform_map = self.wait_for_transform('odom')
-
-        # self.x0 = transform_scanner.transform.translation.x
-        # self.y0 = transform_scanner.transform.translation.y
-        # self.z0 = transform_scanner.transform.translation.z
-        # self.theta0 = transform_scanner.transform.rotation.z
 
 
     def wait_for_transform(self, target_frame, source_frame):
@@ -177,31 +170,13 @@ class MappingNode(Node):
         return data
     
     def scan_callback(self, scan_msg):
-
-        # Delta Time
-        # delta_t = (self.get_clock().now().nanoseconds / 1e9 - self.t0)
-        # delta_x = (self.linear_velocity_mps * np.cos(self.theta0) * delta_t)
-        # delta_y = (self.linear_velocity_mps * np.sin(self.theta0) * delta_t)
-        # delta_theta = self.angular_velocity_radps * delta_t
-
         pc = self.process_scan(scan_msg)
         # print(f'Point Cloud Mean {pc.shape}: \n {mu}')
-
-        # Random Map Exercise
-        # # Create a 2D occupancy grid
-        # occupancy_grid = np.zeros((100, 100), dtype=np.int8)
-        # # Fill random cells with value 100
-        # random_indices = np.random.randint(0, 100, size=(50, 2))
-        # occupancy_grid[random_indices[:, 0], random_indices[:, 1]] = int(100)
-        
 
         # Create an OccupancyGrid message and fill in the information
         map_msg = self.map_msg0
         map_msg.header.stamp = self.get_clock().now().to_msg()
-        # map_msg.info.origin.orientation.x = transform.transform.rotation.x
-        # map_msg.info.origin.orientation.y = transform.transform.rotation.y
-        # map_msg.info.origin.orientation.z = transform.transform.rotation.z
-        # map_msg.info.origin.orientation.w = transform.transform.rotation.w
+
 
         map_msg.data = self.point_to_grid(pc,map_msg)#list([0]*map_msg.info.width*map_msg.info.height)
         # Publish the map
