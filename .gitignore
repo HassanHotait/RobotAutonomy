@@ -3,3 +3,9 @@ build/
 install/
 log/
 .vscode/
+
+src/my_turtlebot/my_turtlebot/LidarOdom.py
+src/my_turtlebot/my_turtlebot/ParticleFilterExplore.py
+src/my_turtlebot/my_turtlebot/test_icp.py
+src/my_turtlebot/my_turtlebot/tf_broadcaster.py
+
